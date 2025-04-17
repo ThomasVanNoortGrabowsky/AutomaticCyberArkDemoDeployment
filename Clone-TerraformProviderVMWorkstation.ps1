@@ -1,64 +1,42 @@
 <#
 .SYNOPSIS
-    Ensures Git is installed, then clones or updates the terraform‑provider‑vmworkstation repo under your GOPATH.
-
-.PARAMETER Gopath
-    Optional. The GOPATH to use. Defaults to $env:GOPATH or "$env:USERPROFILE\go".
-
-.PARAMETER RepoUrl
-    Optional. The Git URL to clone. Defaults to the official GitHub repo.
+    Ensures Git is installed, then clones or updates the terraform-provider-vmworkstation repo
+    into the directory where this script resides.
 
 .PARAMETER Force
-    If specified and the target folder exists, it will be removed and re‑cloned.
+    If specified and the target folder exists, it will be removed and re-cloned.
 #>
 [CmdletBinding()]
 param(
-    [string]$Gopath  = if ($env:GOPATH) { $env:GOPATH } else { "$env:USERPROFILE\go" },
-    [string]$RepoUrl = 'https://github.com/elsudano/terraform-provider-vmworkstation.git',
     [switch]$Force
 )
 
-# 0) Ensure Git is installed
+# 1) Ensure Git is available
 Write-Host "Checking for Git..."
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Host "Git not found. Attempting to install via winget..."
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         Start-Process winget `
-            -ArgumentList @(
-                'install',
-                '--id','Git.Git',
-                '-e',
-                '--source','winget',
-                '--accept-package-agreements',
-                '--accept-source-agreements'
-            ) `
-            -Wait `
-            -NoNewWindow
-        # Refresh this session’s PATH so git becomes available immediately
-        $machinePath = [Environment]::GetEnvironmentVariable('Path','Machine') `
-            .Split(';',[StringSplitOptions]::RemoveEmptyEntries)
-        $userPath    = [Environment]::GetEnvironmentVariable('Path','User') `
-            .Split(';',[StringSplitOptions]::RemoveEmptyEntries)
-        $env:PATH    = ($machinePath + $userPath) -join ';'
+            -ArgumentList 'install','--id','Git.Git','-e','--source','winget',`
+                          '--accept-package-agreements','--accept-source-agreements' `
+            -Wait -NoNewWindow
+        # Reload PATH so 'git' becomes available immediately
+        $paths = (
+            [Environment]::GetEnvironmentVariable('Path','Machine'),
+            [Environment]::GetEnvironmentVariable('Path','User')
+        ) -join ';'
+        $env:PATH = $paths
     }
     else {
-        Write-Error "winget not available. Please install Git manually from https://git-scm.com/download/win and re-run."
+        Write-Error "winget not available. Please install Git manually from https://git-scm.com/download/win"
         exit 1
     }
 }
+Write-Host "Git is now: $(git --version)`n"
 
-Write-Host "Git is now available: $(git --version)`n"
-
-# 1) Compute target paths
-$orgPath   = Join-Path $Gopath 'src\github.com\elsudano'
-$repoName  = ([IO.Path]::GetFileNameWithoutExtension($RepoUrl)).Replace('-main','')
-$targetDir = Join-Path $orgPath $repoName
-
-# 2) Create folder structure
-if (-not (Test-Path $orgPath)) {
-    Write-Host "Creating directory: $orgPath"
-    New-Item -ItemType Directory -Path $orgPath -Force | Out-Null
-}
+# 2) Define repo and local target
+$repoUrl    = 'https://github.com/elsudano/terraform-provider-vmworkstation.git'
+$targetDir  = Join-Path $PSScriptRoot 'terraform-provider-vmworkstation'
 
 # 3) Clone or update
 if (Test-Path $targetDir) {
@@ -69,16 +47,14 @@ if (Test-Path $targetDir) {
 }
 
 if (-not (Test-Path $targetDir)) {
-    Write-Host "Cloning $RepoUrl into $orgPath..."
-    Push-Location $orgPath
-    git clone $RepoUrl
-    Pop-Location
+    Write-Host "Cloning $repoUrl into `"$targetDir`"..."
+    git clone $repoUrl $targetDir
 }
 else {
-    Write-Host "Repository already exists. Pulling latest changes in $targetDir..."
+    Write-Host "Repository exists. Pulling latest changes in `"$targetDir`"..."
     Push-Location $targetDir
     git pull
     Pop-Location
 }
 
-Write-Host "`n✅ Done! Repository is at:`n  $targetDir"
+Write-Host "`n✅ Done! Repo is at:`n  $targetDir"
