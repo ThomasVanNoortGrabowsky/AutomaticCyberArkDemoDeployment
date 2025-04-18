@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Configure VMware Workstation REST API credentials and start the daemon (robust, ASCII‑only).
+  Configure VMware Workstation REST API credentials and start the daemon (plain ASCII, no smart quotes).
 
 .PARAMETER Username
   REST API username (required).
@@ -15,10 +15,12 @@ param(
 
 $VmRestExe = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe'
 if (-not (Test-Path $VmRestExe)) {
-    Write-Error "vmrest.exe not found: $VmRestExe"; exit 1
+    Write-Error "vmrest.exe not found: $VmRestExe"
+    exit 1
 }
 
-function Read-PlainTextPassword($Prompt){
+function Read-PlainTextPassword {
+    param([string]$Prompt)
     $sec = Read-Host -Prompt $Prompt -AsSecureString
     $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
     try { [Runtime.InteropServices.Marshal]::PtrToStringAuto($ptr) }
@@ -39,21 +41,23 @@ while ($true) {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
 
-    $p = [System.Diagnostics.Process]::Start($psi)
-    $p.StandardInput.WriteLine($Username)
-    $p.StandardInput.WriteLine($Password)
-    $p.StandardInput.WriteLine($Password)
-    $p.StandardInput.Close()
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $proc.StandardInput.WriteLine($Username)
+    $proc.StandardInput.WriteLine($Password)
+    $proc.StandardInput.WriteLine($Password)
+    $proc.StandardInput.Close()
 
-    $p.WaitForExit()
-    $out = ($p.StandardOutput.ReadToEnd() + $p.StandardError.ReadToEnd())
-    if ($out -match 'Password does not meet complexity requirements') {
-        Write-Warning "Password complexity failure — please try again."
+    $proc.WaitForExit()
+    $output = ($proc.StandardOutput.ReadToEnd() + $proc.StandardError.ReadToEnd())
+
+    if ($output -match 'Password does not meet complexity requirements') {
+        Write-Warning "Password complexity failure - please try again."
         $Password = Read-PlainTextPassword "Enter NEW password"
         continue
     }
-    if ($p.ExitCode -ne 0) {
-        Write-Error "vmrest.exe --config failed (exit $($p.ExitCode)). Output:`n$out"; exit 1
+    if ($proc.ExitCode -ne 0) {
+        Write-Error "vmrest.exe --config failed (exit $($proc.ExitCode)). Output:`n$output"
+        exit 1
     }
     Write-Host "Credentials configured successfully." -ForegroundColor Green
     break
