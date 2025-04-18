@@ -3,41 +3,50 @@
   Build the terraform-provider-vmworkstation plugin from source.
 
 .DESCRIPTION
-  1. Navigates to the provider source directory.
+  1. Uses the script directory (or specified path) as the provider source directory.
   2. Removes any old build of terraform-provider-vmworkstation.exe.
   3. Runs `go build` to compile the plugin.
   4. Verifies the binary exists.
   5. Runs the binary with `-help` to check it’s valid.
 
 .PARAMETER ProjectDir
-  Path to the cloned terraform-provider-vmworkstation repo.
-  Defaults to $env:GOPATH\src\github.com\elsudano\terraform-provider-vmworkstation.
+  (Optional) Path to the cloned terraform-provider-vmworkstation repository.
+  Defaults to the directory where this script resides.
 
 .EXAMPLE
   .\BuildProvider.ps1
+    Builds using the current script folder as source.
+
+.EXAMPLE
+  .\BuildProvider.ps1 -ProjectDir "D:\Code\vmworkstation"
+    Builds using the given folder as source.
 #>
 
 param(
-    [string]$ProjectDir = (Join-Path $env:GOPATH "src\github.com\elsudano\terraform-provider-vmworkstation")
+    [string]$ProjectDir = $PSScriptRoot
 )
 
 # 1. Ensure project directory exists
 if (-not (Test-Path $ProjectDir -PathType Container)) {
-    Write-Error "Project directory '$ProjectDir' not found."
+    Write-Error "Project directory '$ProjectDir' not found. Please clone the repo there first or specify -ProjectDir."
     exit 1
 }
 
-# Remember current location, switch to project
+# 2. Verify this looks like the provider source
+if (-not (Test-Path (Join-Path $ProjectDir 'go.mod'))) {
+    Write-Warning "No go.mod found in '$ProjectDir'. Are you sure this is the provider source folder?"
+}
+
 Push-Location $ProjectDir
 
-# 2. Remove old binary if present
-$exe = "terraform-provider-vmworkstation.exe"
+# 3. Remove old binary if present
+$exe = 'terraform-provider-vmworkstation.exe'
 if (Test-Path $exe) {
     Write-Host "Removing existing $exe..." -ForegroundColor Yellow
     Remove-Item $exe -Force
 }
 
-# 3. Build the provider
+# 4. Build the provider
 Write-Host "Running: go build -o $exe" -ForegroundColor Cyan
 go build -o $exe
 if ($LASTEXITCODE -ne 0) {
@@ -46,7 +55,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 4. Verify the binary exists
+# 5. Verify the binary exists
 if (-not (Test-Path $exe)) {
     Write-Error "Build succeeded but $exe not found."
     Pop-Location
@@ -55,11 +64,10 @@ if (-not (Test-Path $exe)) {
 
 Write-Host "Build succeeded: $exe" -ForegroundColor Green
 
-# 5. Sanity check the binary
+# 6. Sanity check the binary
 Write-Host "`nVerifying with '$exe -help'..." -ForegroundColor Cyan
-& .\terraform-provider-vmworkstation.exe -help
+& .\$exe -help
 
-# Return to original folder
 Pop-Location
 
-Write-Host "`nDone. The provider binary is ready in $ProjectDir." -ForegroundColor Green
+Write-Host "`nDone. The provider binary is ready in '$ProjectDir'." -ForegroundColor Green
