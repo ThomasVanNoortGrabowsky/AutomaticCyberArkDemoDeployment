@@ -3,7 +3,7 @@
   Build the terraform-provider-vmworkstation plugin from source.
 
 .DESCRIPTION
-  1. Detects the provider source directory (from -ProjectDir or known defaults).
+  1. Detects the provider source directory (from -ProjectDir or defaults).
   2. Removes any old build of terraform-provider-vmworkstation.exe.
   3. Runs `go build` to compile the plugin.
   4. Verifies the binary exists.
@@ -12,77 +12,46 @@
 .PARAMETER ProjectDir
   Optional: explicitly specify the provider source directory.
   If omitted, the script will look in:
-    1. The current script folder ($PSScriptRoot)
-    2. %GOPATH%\src\github.com\elsudano\terraform-provider-vmworkstation
-    3. A subfolder named "terraform-provider-vmworkstation" under the script folder
-  and pick the first one containing go.mod.
+    A) $env:GOPATH\src\github.com\elsudano\terraform-provider-vmworkstation
+    B) A subfolder named "terraform-provider-vmworkstation" under $PSScriptRoot
+  and pick the first containing go.mod.
+
+.EXAMPLE
+  .\BuildProvider.ps1
+  (Detects and builds from your GOPATH or subfolder.)
+
+.EXAMPLE
+  .\BuildProvider.ps1 -ProjectDir "D:\Code\terraform-provider-vmworkstation"
+  (Forces use of that folder.)
 #>
 
 param(
     [string]$ProjectDir = ''
 )
 
-# 1. Auto-detect project directory if not provided
+# Auto‑detect if none provided
 if (-not $ProjectDir) {
-    # Candidate 1: script folder
-    if (Test-Path (Join-Path $PSScriptRoot 'go.mod')) {
-        $ProjectDir = $PSScriptRoot
+    $gopathRepo = Join-Path $env:GOPATH 'src\github.com\elsudano\terraform-provider-vmworkstation'
+    $subfolderRepo = Join-Path $PSScriptRoot 'terraform-provider-vmworkstation'
+
+    if ($env:GOPATH -and (Test-Path (Join-Path $gopathRepo 'go.mod'))) {
+        $ProjectDir = $gopathRepo
     }
-    # Candidate 2: GOPATH location
-    elseif ($env:GOPATH -and Test-Path (Join-Path $env:GOPATH 'src/github.com/elsudano/terraform-provider-vmworkstation/go.mod')) {
-        $ProjectDir = Join-Path $env:GOPATH 'src/github.com/elsudano/terraform-provider-vmworkstation'
-    }
-    # Candidate 3: subfolder under script
-    elseif (Test-Path (Join-Path $PSScriptRoot 'terraform-provider-vmworkstation/go.mod')) {
-        $ProjectDir = Join-Path $PSScriptRoot 'terraform-provider-vmworkstation'
+    elseif (Test-Path (Join-Path $subfolderRepo 'go.mod')) {
+        $ProjectDir = $subfolderRepo
     }
     else {
-        Write-Error "Could not locate terraform-provider-vmworkstation source. Please specify -ProjectDir explicitly."
+        Write-Error "Cannot locate terraform-provider-vmworkstation source. Use -ProjectDir to specify it."
         exit 1
     }
 }
 
-Write-Host "Using provider source folder: '$ProjectDir'" -ForegroundColor Cyan
+Write-Host "Building provider from: $ProjectDir" -ForegroundColor Cyan
 
-# 2. Ensure directory exists and looks valid
+# Validate
 if (-not (Test-Path $ProjectDir -PathType Container)) {
-    Write-Error "Project directory '$ProjectDir' not found."
+    Write-Error "Directory not found: $ProjectDir"
     exit 1
 }
 if (-not (Test-Path (Join-Path $ProjectDir 'go.mod'))) {
-    Write-Warning "No go.mod found in '$ProjectDir'. Make sure this is the provider source."
-}
-
-Push-Location $ProjectDir
-
-# 3. Remove old binary if present
-$exe = 'terraform-provider-vmworkstation.exe'
-if (Test-Path $exe) {
-    Write-Host "Removing existing $exe..." -ForegroundColor Yellow
-    Remove-Item $exe -Force
-}
-
-# 4. Build the provider
-Write-Host "Running: go build -o $exe" -ForegroundColor Cyan
-& go build -o $exe
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "go build failed (exit code $LASTEXITCODE)."
-    Pop-Location
-    exit 1
-}
-
-# 5. Verify the binary exists
-if (-not (Test-Path $exe)) {
-    Write-Error "Build succeeded but $exe not found."
-    Pop-Location
-    exit 1
-}
-Write-Host "Build succeeded: $exe" -ForegroundColor Green
-
-# 6. Sanity check the binary
-Write-Host "`nVerifying with '$exe -help'..." -ForegroundColor Cyan
-& .\$exe -help
-
-Pop-Location
-
-Write-Host "`nDone. The provider binary is ready in '$ProjectDir'." -ForegroundColor Green
+    Write-Warning "No go.mod in $
