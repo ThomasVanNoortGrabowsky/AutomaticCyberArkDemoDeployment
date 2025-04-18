@@ -28,9 +28,16 @@ Write-Host "==> Checking for Git..."
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Host "Git not found. Installing via winget..." -ForegroundColor Yellow
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Start-Process winget -ArgumentList 
-          'install','--id','Git.Git','-e','--source','winget',
-          '--accept-package-agreements','--accept-source-agreements' -Wait -NoNewWindow
+        # Install Git via winget
+        Start-Process -FilePath winget -ArgumentList @(
+            'install',
+            '--id', 'Git.Git',
+            '-e',
+            '--source', 'winget',
+            '--accept-package-agreements',
+            '--accept-source-agreements'
+        ) -NoNewWindow -Wait
+        # Refresh PATH in this session
         $env:PATH = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
                     [Environment]::GetEnvironmentVariable('Path','User')
     } else {
@@ -73,10 +80,13 @@ if (-not (Test-Path $APIClientRepo)) {
 }
 
 # 5) Build the provider plugin
-Write-Host "\n==> Building terraform-provider-vmworkstation.exe" -ForegroundColor Cyan
+Write-Host "`n==> Building terraform-provider-vmworkstation.exe" -ForegroundColor Cyan
 Push-Location $ProviderRepo
 $ExeName = 'terraform-provider-vmworkstation.exe'
-if (Test-Path $ExeName) { Write-Host "Removing old $ExeName..." -ForegroundColor Yellow; Remove-Item $ExeName -Force }
+if (Test-Path $ExeName) {
+    Write-Host "Removing old $ExeName..." -ForegroundColor Yellow
+    Remove-Item $ExeName -Force
+}
 
 go build -o $ExeName
 if ($LASTEXITCODE -ne 0) {
@@ -92,8 +102,8 @@ Pop-Location
 
 # 6) Install plugin into Terraform plugin dir
 $PluginDir = Join-Path $env:APPDATA "terraform.d\plugins\windows_amd64\elsudano\vmworkstation\$PluginVersion"
-Write-Host "\n==> Installing provider plugin to:`n  $PluginDir" -ForegroundColor Cyan
+Write-Host "`n==> Installing provider plugin to:`n  $PluginDir" -ForegroundColor Cyan
 if (-not (Test-Path $PluginDir)) { New-Item -ItemType Directory -Path $PluginDir -Force | Out-Null }
 Copy-Item -Path (Join-Path $ProviderRepo $ExeName) -Destination (Join-Path $PluginDir $ExeName) -Force
 
-Write-Host "\n✅ All done! Provider v$PluginVersion installed at:`n  $PluginDir\$ExeName" -ForegroundColor Green
+Write-Host "`n✅ All done! Provider v$PluginVersion installed at:`n  $PluginDir\$ExeName" -ForegroundColor Green
