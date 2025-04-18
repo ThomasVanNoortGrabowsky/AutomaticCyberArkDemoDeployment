@@ -1,10 +1,11 @@
 <#
 .SYNOPSIS
-  Automates enabling VMware Workstation REST API: configures credentials and starts the service.
+  Automates enabling VMware Workstation REST API: configures credentials with a timeout and starts the service.
 
 .DESCRIPTION
   * Prompts for API credentials (username/password) and enforces required complexity.
-  * Runs `vmrest.exe --config` in a loop until valid credentials are accepted.
+  * Runs `vmrest.exe --config` with redirected input and a timeout (10s).
+  * Retries on complexity errors until valid or timeout.
   * Optionally starts the `vmrest.exe` daemon to serve requests.
 
 .PARAMETER Username
@@ -35,7 +36,7 @@ if (-not (Test-Path $VmRestDir)) {
     exit 1
 }
 
-# Helper to convert SecureString to plaintext
+# Helper to read secure password as plaintext
 function Read-PlainTextPassword {
     param([string]$Prompt)
     $secure = Read-Host -Prompt $Prompt -AsSecureString
@@ -47,37 +48,44 @@ function Read-PlainTextPassword {
     }
 }
 
-# Loop until vmrest accepts credentials
+# Loop until credentials accepted or user aborts
 while ($true) {
     if (-not $Password) {
         $Password = Read-PlainTextPassword "Enter REST API password for user '$Username' (8-12 chars, upper/lower/digit/special)"
     }
 
     Write-Host "Configuring REST API credentials..." -ForegroundColor Cyan
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = "${VmRestDir}\vmrest.exe"
     $psi.Arguments = '--config'
     $psi.UseShellExecute = $false
-    $psi.RedirectStandardInput  = $true
+    $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
 
     $proc = [System.Diagnostics.Process]::Start($psi)
-    $stdout = $proc.StandardOutput
+    # Feed username and password entries
     $proc.StandardInput.WriteLine($Username)
     $proc.StandardInput.WriteLine($Password)
     $proc.StandardInput.WriteLine($Password)
     $proc.StandardInput.Close()
 
-    $output = $stdout.ReadToEnd()
-    $proc.WaitForExit()
+    # Wait up to 10 seconds
+    if (-not $proc.WaitForExit(10000)) {
+        Write-Error "Timeout waiting for vmrest.exe --config to finish."
+        $proc.Kill()
+        exit 1
+    }
+
+    $output = $proc.StandardOutput.ReadToEnd() + $proc.StandardError.ReadToEnd()
 
     if ($output -match 'Password does not meet complexity requirements') {
-        Write-Warning "Password did not meet complexity requirements. Please try again."
+        Write-Warning "Password complexity failure. Please try again."
         $Password = $null
         continue
     }
     if ($proc.ExitCode -ne 0) {
-        Write-Error "vmrest --config failed (exit code $($proc.ExitCode)). Output:`n$output"
+        Write-Error "vmrest.exe --config failed (exit $($proc.ExitCode)). Output:`n$output"
         exit 1
     }
 
@@ -85,11 +93,13 @@ while ($true) {
     break
 }
 
-# Optionally start the REST API daemon
+# Start REST API daemon if requested
 if ($StartDaemon) {
     Write-Host "Starting REST API daemon..." -ForegroundColor Cyan
     Start-Process -FilePath "${VmRestDir}\vmrest.exe" -NoNewWindow
     Write-Host "Daemon started. Listening on http://127.0.0.1:8697" -ForegroundColor Green
 } else {
-    Write-Host "`nTo start the daemon manually, run:`n  & '${VmRestDir}\vmrest.exe'" -ForegroundColor Yellow
+    Write-Host "`nTo start the daemon manually": -ForegroundColor Yellow
+    Write-Host "  & '${VmRestDir}\vmrest.exe'" -ForegroundColor Yellow
+    Write-Host "Or re-run this script with -StartDaemon`n" -ForegroundColor Yellow
 }
