@@ -13,7 +13,7 @@
   Optional: explicitly specify the provider source directory.
   If omitted, the script will look in:
     A) $env:GOPATH\src\github.com\elsudano\terraform-provider-vmworkstation
-    B) A subfolder named "terraform-provider-vmworkstation" under $PSScriptRoot
+    B) A subfolder named 'terraform-provider-vmworkstation' under $PSScriptRoot
   and pick the first containing go.mod.
 
 .EXAMPLE
@@ -22,14 +22,14 @@
 
 .EXAMPLE
   .\BuildProvider.ps1 -ProjectDir "D:\Code\terraform-provider-vmworkstation"
-  (Forces use of that folder.)
+  (Builds from the specified folder.)
 #>
 
 param(
     [string]$ProjectDir = ''
 )
 
-# Auto‑detect if none provided
+# Auto-detect if ProjectDir not provided
 if (-not $ProjectDir) {
     $gopathRepo = Join-Path $env:GOPATH 'src\github.com\elsudano\terraform-provider-vmworkstation'
     $subfolderRepo = Join-Path $PSScriptRoot 'terraform-provider-vmworkstation'
@@ -48,10 +48,48 @@ if (-not $ProjectDir) {
 
 Write-Host "Building provider from: $ProjectDir" -ForegroundColor Cyan
 
-# Validate
+# Validate directory
 if (-not (Test-Path $ProjectDir -PathType Container)) {
     Write-Error "Directory not found: $ProjectDir"
     exit 1
 }
 if (-not (Test-Path (Join-Path $ProjectDir 'go.mod'))) {
-    Write-Warning "No go.mod in $
+    Write-Warning ("No go.mod found in '{0}'. Ensure this is the provider source folder." -f $ProjectDir)
+}
+
+# Switch to project folder
+Push-Location $ProjectDir
+
+# Remove old binary
+$exe = 'terraform-provider-vmworkstation.exe'
+if (Test-Path $exe) {
+    Write-Host "Removing existing $exe..." -ForegroundColor Yellow
+    Remove-Item $exe -Force
+}
+
+# Build the provider
+Write-Host "Running: go build -o $exe" -ForegroundColor Cyan
+go build -o $exe
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "go build failed (exit code $LASTEXITCODE)."
+    Pop-Location
+    exit 1
+}
+
+# Verify the binary exists
+if (-not (Test-Path $exe)) {
+    Write-Error "Build succeeded but $exe was not found."
+    Pop-Location
+    exit 1
+}
+
+Write-Host "Build successful: $ProjectDir\$exe" -ForegroundColor Green
+
+# Sanity check: display help
+Write-Host "`nVerifying help output..." -ForegroundColor Cyan
+& .\$exe -help
+
+# Return to original folder
+Pop-Location
+
+Write-Host "`nDone. Provider binary is ready in $ProjectDir" -ForegroundColor Green
