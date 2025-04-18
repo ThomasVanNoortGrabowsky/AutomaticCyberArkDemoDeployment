@@ -1,40 +1,38 @@
 <#
 .SYNOPSIS
-  Clones or updates the terraform-provider-vmworkstation repo and builds the provider plugin.
+  Clone/update and build the Terraform VMware Workstation provider, then install it.
 
 .DESCRIPTION
-  1. Ensures Git is installed (installs via winget if missing).
-  2. Clones or updates the terraform-provider-vmworkstation repo under the script folder.
-  3. Detects that repo folder and runs `go build` to produce terraform-provider-vmworkstation.exe.
-  4. Verifies the build succeeded.
+  * Checks for Git and installs via winget if missing.
+  * Clones (or pulls) https://github.com/elsudano/terraform-provider-vmworkstation 
+    into a subfolder under the script location.
+  * Runs `go build -o terraform-provider-vmworkstation.exe`.
+  * Copies the resulting EXE into Terraform’s plugin directory under %APPDATA%,
+    so Terraform will find it automatically.
 
 .PARAMETER Force
-  If specified, will delete & reclone the repo even if it already exists.
+  If specified, the script will delete any existing clone and re-clone fresh.
 
-.EXAMPLE
-  .\Setup-TFWsProvider.ps1
-  (Clones/pulls, then builds.)
-
-.EXAMPLE
-  .\Setup-TFWsProvider.ps1 -Force
-  (Deletes the existing clone, then re-clones and builds.)
+.PARAMETER PluginVersion
+  The provider version folder under the plugin directory. Defaults to "1.1.6".
 #>
 
 [CmdletBinding()]
 param(
-    [switch]$Force
+  [switch]$Force,
+  [string]$PluginVersion = '1.1.6'
 )
 
 # 1) Ensure Git is available
 Write-Host "==> Checking for Git..."
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    Write-Host "Git not found. Installing via winget..."
+    Write-Host "Git not found. Installing via winget..." -ForegroundColor Yellow
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         Start-Process winget `
           -ArgumentList 'install','--id','Git.Git','-e','--source','winget',`
                         '--accept-package-agreements','--accept-source-agreements' `
           -Wait -NoNewWindow
-        # Refresh PATH for this session
+        # Refresh PATH in this session
         $env:PATH = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' +
                     [Environment]::GetEnvironmentVariable('Path','User')
     }
@@ -43,70 +41,71 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         exit 1
     }
 }
-Write-Host "Git version: $(git --version)" -ForegroundColor Green
+Write-Host "Git is available: $(git --version)" -ForegroundColor Green
 
-# 2) Clone or update the provider repo
-$repoUrl   = 'https://github.com/elsudano/terraform-provider-vmworkstation.git'
-$targetDir = Join-Path $PSScriptRoot 'terraform-provider-vmworkstation'
+# 2) Define where to clone the provider
+$RepoDir   = Join-Path $PSScriptRoot 'terraform-provider-vmworkstation'
+$RepoUrl   = 'https://github.com/elsudano/terraform-provider-vmworkstation.git'
 
-if (Test-Path $targetDir) {
+# 3) Clone or update the repo
+if (Test-Path $RepoDir) {
     if ($Force) {
-        Write-Host "Removing existing folder for fresh clone..." -ForegroundColor Yellow
-        Remove-Item -Recurse -Force $targetDir
+        Write-Host "Removing existing repo for fresh clone..." -ForegroundColor Yellow
+        Remove-Item -Recurse -Force $RepoDir
     }
 }
 
-if (-not (Test-Path $targetDir)) {
-    Write-Host "Cloning $repoUrl into '$targetDir'..." -ForegroundColor Cyan
-    git clone $repoUrl $targetDir
+if (-not (Test-Path $RepoDir)) {
+    Write-Host "Cloning provider into '$RepoDir'..." -ForegroundColor Cyan
+    git clone $RepoUrl $RepoDir
 }
 else {
-    Write-Host "Updating existing repo in '$targetDir'..." -ForegroundColor Cyan
-    Push-Location $targetDir
+    Write-Host "Updating existing provider clone..." -ForegroundColor Cyan
+    Push-Location $RepoDir
     git pull
     Pop-Location
 }
 
-# 3) Build the provider plugin
-Write-Host "`n==> Building terraform-provider-vmworkstation..." -ForegroundColor Cyan
+# 4) Build the provider plugin
+Write-Host "`n==> Building terraform-provider-vmworkstation.exe" -ForegroundColor Cyan
+Push-Location $RepoDir
 
-if (-not (Test-Path $targetDir)) {
-    Write-Error "Provider source folder '$targetDir' not found."
-    exit 1
+# Remove any old build
+$ExeName = 'terraform-provider-vmworkstation.exe'
+if (Test-Path $ExeName) {
+    Write-Host "Deleting old binary $ExeName" -ForegroundColor Yellow
+    Remove-Item $ExeName -Force
 }
 
-Push-Location $targetDir
-
-# Clean up any old binary
-$exe = 'terraform-provider-vmworkstation.exe'
-if (Test-Path $exe) {
-    Write-Host "Removing old binary $exe..." -ForegroundColor Yellow
-    Remove-Item $exe -Force
-}
-
-# Run the Go build
-Write-Host "Running: go build -o $exe"
-go build -o $exe
+# Run the build
+go build -o $ExeName
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "go build failed (exit code $LASTEXITCODE)."
+    Write-Error "go build failed with exit code $LASTEXITCODE"
     Pop-Location
     exit 1
 }
 
-# Verify the binary exists
-if (-not (Test-Path $exe)) {
-    Write-Error "Build reported success but $exe was not produced."
+if (-not (Test-Path $ExeName)) {
+    Write-Error "Build succeeded but $ExeName was not found."
     Pop-Location
     exit 1
 }
 
-Write-Host "Build succeeded: $targetDir\$exe" -ForegroundColor Green
-
-# Optional: run '-help' to sanity‑check
-Write-Host "`nVerifying plugin help output..." -ForegroundColor Cyan
-& .\terraform-provider-vmworkstation.exe -help
+Write-Host "Build succeeded: $RepoDir\$ExeName" -ForegroundColor Green
 
 Pop-Location
 
-Write-Host "`n✅ All done! The provider binary lives in:" -ForegroundColor Green
-Write-Host "   $targetDir\$exe`n"
+# 5) Install into Terraform local plugin directory
+$PluginDir = Join-Path $env:APPDATA "terraform.d\plugins\windows_amd64\elsudano\vmworkstation\$PluginVersion"
+Write-Host "`n==> Installing provider plugin to:" -ForegroundColor Cyan
+Write-Host "   $PluginDir" -ForegroundColor Cyan
+
+if (-not (Test-Path $PluginDir)) {
+    New-Item -ItemType Directory -Path $PluginDir -Force | Out-Null
+}
+
+Copy-Item -Path (Join-Path $RepoDir $ExeName) `
+          -Destination (Join-Path $PluginDir $ExeName) -Force
+
+Write-Host "`n✅ Done! The provider plugin is installed here:" -ForegroundColor Green
+Write-Host "   $PluginDir\$ExeName`n"
