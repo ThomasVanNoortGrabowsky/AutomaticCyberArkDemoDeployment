@@ -48,44 +48,26 @@ function Read-PlainTextPassword {
     }
 }
 
-# Loop until credentials accepted or user aborts
+# Loop until credentials accepted or user aborts using pipeline-based input
 while ($true) {
     if (-not $Password) {
         $Password = Read-PlainTextPassword "Enter REST API password for user '$Username' (8-12 chars, upper/lower/digit/special)"
     }
 
     Write-Host "Configuring REST API credentials..." -ForegroundColor Cyan
-    $psi = [System.Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = "${VmRestDir}\vmrest.exe"
-    $psi.Arguments = '--config'
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    # Feed username and password entries
-    $proc.StandardInput.WriteLine($Username)
-    $proc.StandardInput.WriteLine($Password)
-    $proc.StandardInput.WriteLine($Password)
-    $proc.StandardInput.Close()
-
-    # Wait up to 10 seconds
-    if (-not $proc.WaitForExit(10000)) {
-        Write-Error "Timeout waiting for vmrest.exe --config to finish."
-        $proc.Kill()
-        exit 1
-    }
-
-    $output = $proc.StandardOutput.ReadToEnd() + $proc.StandardError.ReadToEnd()
+    # Prepare stdin content: username, password, password
+    $stdinContent = "$Username`n$Password`n$Password`n"
+    # Run vmrest.exe --config, feeding stdinContent via pipeline
+    $output = $stdinContent | & "$VmRestDirmrest.exe" --config 2>&1
+    $exitCode = $LASTEXITCODE
 
     if ($output -match 'Password does not meet complexity requirements') {
         Write-Warning "Password complexity failure. Please try again."
         $Password = $null
         continue
     }
-    if ($proc.ExitCode -ne 0) {
-        Write-Error "vmrest.exe --config failed (exit $($proc.ExitCode)). Output:`n$output"
+    if ($exitCode -ne 0) {
+        Write-Error "vmrest.exe --config failed (exit $exitCode). Output:`n$output"
         exit 1
     }
 
@@ -94,6 +76,15 @@ while ($true) {
 }
 
 # Start REST API daemon if requested
+if ($StartDaemon) {
+    Write-Host "Starting REST API daemon..." -ForegroundColor Cyan
+    Start-Process -FilePath "${VmRestDir}mrest.exe" -NoNewWindow
+    Write-Host "Daemon started. Listening on http://127.0.0.1:8697" -ForegroundColor Green
+} else {
+    Write-Host "`nTo start the daemon manually": -ForegroundColor Yellow
+    Write-Host "  & '${VmRestDir}mrest.exe'" -ForegroundColor Yellow
+    Write-Host "Or re-run this script with -StartDaemon`n" -ForegroundColor Yellow
+}
 if ($StartDaemon) {
     Write-Host "Starting REST API daemon..." -ForegroundColor Cyan
     Start-Process -FilePath "${VmRestDir}\vmrest.exe" -NoNewWindow
