@@ -1,77 +1,73 @@
 <#
 .SYNOPSIS
-  Automates enabling VMware Workstation REST API: configures credentials and starts the service.
+  Configure Terraform to use your locally built vmworkstation provider and run Terraform end-to-end.
 
 .DESCRIPTION
-  * Prompts for API credentials (username/password) and enforces required complexity.
-  * Runs `vmrest.exe --config` with piped input and checks output for errors.
-  * Retries if password complexity fails.
-  * Optionally starts the `vmrest.exe` daemon.
+  * Writes a CLI config (terraform.rc) overriding "elsudano/vmworkstation" to a local plugin folder.
+  * Sets TF_CLI_CONFIG_FILE for the current session.
+  * Runs `terraform init -upgrade`, `terraform plan -out=tfplan`, and `terraform apply -auto-approve tfplan`.
 
-.PARAMETER Username
-  Username for the Workstation REST API (e.g., "vmrest").
+.PARAMETER PluginDir
+  Path to the folder containing terraform-provider-vmworkstation.exe. Defaults to a "terraform-provider-vmworkstation" subfolder of this script.
 
-.PARAMETER Password
-  Optional: initial password. If not provided, script prompts interactively.
-
-.PARAMETER StartDaemon
-  If specified, starts the REST API daemon after configuration.
+.PARAMETER WorkingDir
+  Path to your Terraform project (where main.tf lives). Defaults to the current folder ($PSScriptRoot).
 
 .EXAMPLE
-  .\Setup-VMWorkstationApi.ps1 -Username vmrest -StartDaemon
-  Prompts for password until valid, then starts the daemon.
-#>
+  .\Create-TerraformRc.ps1
+  Uses .\terraform-provider-vmworkstation and current folder as Terraform project.
 
-[CmdletBinding()]
+.EXAMPLE
+  .\Create-TerraformRc.ps1 -PluginDir "C:\Builds\vmworkstation" -WorkingDir "C:\terraform-vmware-test"
+#>
 param(
-    [Parameter(Mandatory=$true)] [string]$Username,
-    [string]$Password,
-    [switch]$StartDaemon
+    [string]$PluginDir   = (Join-Path $PSScriptRoot 'terraform-provider-vmworkstation'),
+    [string]$WorkingDir  = $PSScriptRoot
 )
 
-# Path to VMware Workstation REST tool
-$VmRestExe = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe'
-if (-not (Test-Path $VmRestExe)) {
-    Write-Error "vmrest.exe not found at path: $VmRestExe"
-    exit 1
+# Validate plugin executable
+$exe = 'terraform-provider-vmworkstation.exe'
+$exePath = Join-Path $PluginDir $exe
+if (-not (Test-Path $exePath)) {
+    Write-Error "Cannot find provider at: $exePath"; exit 1
 }
 
-function Read-PlainTextPassword {
-    param([string]$Prompt)
-    $secure = Read-Host -Prompt $Prompt -AsSecureString
-    $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-    try { [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
-    finally { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+# Build CLI config content
+$dir = $PluginDir -replace '\\','/'
+$rc = @"
+provider_installation {
+  dev_overrides {
+    "registry.terraform.io/elsudano/vmworkstation" = "$dir"
+  }
+  direct {}
 }
+"@
 
-while ($true) {
-    if (-not $Password) {
-        $Password = Read-PlainTextPassword "Enter REST API password for '$Username' (8-12 chars, upper/lower/digit/special)"
-    }
+# Write terraform.rc
+$cliConfig = Join-Path $env:APPDATA 'terraform.rc'
+Write-Host "Writing CLI config to: $cliConfig" -ForegroundColor Cyan
+$rc | Set-Content -Path $cliConfig -Encoding ASCII
 
-    Write-Host "Configuring REST API credentials..." -ForegroundColor Cyan
-    $stdin = "$Username`n$Password`n$Password`n"
-    $output = $stdin | & $VmRestExe --config 2>&1
-    $exitCode = $LASTEXITCODE
+# Export for this session
+$env:TF_CLI_CONFIG_FILE = $cliConfig
+Write-Host "Set TF_CLI_CONFIG_FILE to $cliConfig" -ForegroundColor Green
 
-    if ($output -match 'Password does not meet complexity requirements') {
-        Write-Warning "Password complexity failure. Please try again."
-        $Password = $null
-        continue
-    }
-    if ($exitCode -ne 0) {
-        Write-Error "vmrest.exe --config failed (exit $exitCode). Output:`n$output"
-        exit 1
-    }
+# Change to Terraform project
+Write-Host "`nSwitching to Terraform working dir: $WorkingDir" -ForegroundColor Cyan
+Push-Location $WorkingDir
 
-    Write-Host "Credentials configured successfully." -ForegroundColor Green
-    break
-}
+# Initialize
+Write-Host "`n==> terraform init -upgrade" -ForegroundColor Cyan
+terraform init -upgrade
 
-if ($StartDaemon) {
-    Write-Host "Starting REST API daemon..." -ForegroundColor Cyan
-    Start-Process -FilePath $VmRestExe -NoNewWindow
-    Write-Host "Daemon started. Listening on http://127.0.0.1:8697" -ForegroundColor Green
-} else {
-    Write-Host "`nTo start the daemon manually, run:`n  & '$VmRestExe'`n" -ForegroundColor Yellow
-}
+# Plan
+Write-Host "`n==> terraform plan -out=tfplan" -ForegroundColor Cyan
+terraform plan -out=tfplan
+
+# Apply
+Write-Host "`n==> terraform apply -auto-approve tfplan" -ForegroundColor Cyan
+terraform apply -auto-approve tfplan
+
+# Return
+Pop-Location
+Write-Host "`nAll done!" -ForegroundColor Green
