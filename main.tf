@@ -13,8 +13,10 @@ provider "vmworkstation" {
   url      = "http://127.0.0.1:8697"
 }
 
+data "vmworkstation_vms" "all" {}
+
 resource "vmworkstation_vm" "test_vm" {
-  sourceid     = var.base_vm_id
+  sourceid     = data.vmworkstation_vms.all.ids[0]
   denomination = "TestVM-Terraform"
   description  = "VM created via Terraform"
   processors   = var.vm_processors
