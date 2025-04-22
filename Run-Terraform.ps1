@@ -1,23 +1,26 @@
-.PARAMETER AutoApprove
-  If present, uses `-auto-approve` on apply to skip the confirmation prompt.
-#>
+<#
+.SYNOPSIS
+  Runs Terraform init, plan, and apply (with optional auto-approve) in the current directory.
 
+.PARAMETER AutoApprove
+  If present, uses -auto-approve on apply to skip the confirmation prompt.
+#>
 param(
-  [switch]$AutoApprove
+    [switch]$AutoApprove
 )
 
-# Make sure we’re in the right folder
+# Change to script folder (where your .tf files are)
 Push-Location $PSScriptRoot
 
-# 1) Init
+# Initialize Terraform
 Write-Host "`n==> terraform init" -ForegroundColor Cyan
 terraform init
 
-# 2) Plan
+# Plan
 Write-Host "`n==> terraform plan" -ForegroundColor Cyan
 terraform plan
 
-# 3) Apply
+# Apply
 if ($AutoApprove) {
     Write-Host "`n==> terraform apply -auto-approve" -ForegroundColor Cyan
     terraform apply -auto-approve
@@ -26,4 +29,5 @@ if ($AutoApprove) {
     terraform apply
 }
 
+# Return to original directory
 Pop-Location
