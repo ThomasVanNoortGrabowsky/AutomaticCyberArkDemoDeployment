@@ -55,4 +55,11 @@ provider_installation {
 Write-Host "Writing terraform.rc to: $rcFile" -ForegroundColor Cyan
 $rcContent | Set-Content -Path $rcFile -Encoding ASCII
 
-Write-Host "Done. terraform.rc now overrides vmworkstation provider to load from:$dirPath" -ForegroundColor Green
+Write-Host "Done. terraform.rc now overrides vmworkstation provider to load from: $dirPath" -ForegroundColor Green
+
+# Initialize and Plan Terraform
+Write-Host "`n==> terraform init" -ForegroundColor Cyan
+terraform init
+
+Write-Host "`n==> terraform plan" -ForegroundColor Cyan
+terraform plan
