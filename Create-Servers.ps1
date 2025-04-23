@@ -20,8 +20,8 @@ if (-not (Test-Path $packerExe)) {
     New-Item -Path $installDir -ItemType Directory -Force | Out-Null
     $zip = Join-Path $installDir "packer.zip"
     Invoke-WebRequest `
-        -Uri "https://releases.hashicorp.com/packer/$packerVersion/packer_${packerVersion}_windows_amd64.zip" `
-        -OutFile $zip
+      -Uri "https://releases.hashicorp.com/packer/$packerVersion/packer_${packerVersion}_windows_amd64.zip" `
+      -OutFile $zip
     Expand-Archive -Path $zip -DestinationPath $installDir -Force
     Remove-Item $zip
     Write-Host "-> Packer installed at $installDir" -ForegroundColor Green
@@ -29,9 +29,7 @@ if (-not (Test-Path $packerExe)) {
 
 ### 2) Prompt for inputs ###
 $IsoPath        = Read-Host "1) Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)"
-if (-not (Test-Path $IsoPath -PathType Leaf)) {
-    Write-Error "ISO not found at '$IsoPath'"; exit 1
-}
+if (-not (Test-Path $IsoPath -PathType Leaf)) { Write-Error "ISO not found at '$IsoPath'"; exit 1 }
 $VmrestUser     = Read-Host "2) vmrest API username"
 $VmrestSecure   = Read-Host "3) vmrest API password" -AsSecureString
 $VmrestPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
@@ -42,13 +40,15 @@ $DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
 $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
-### 3) Write Autounattend.xml (skip language/keyboard) ###
-$autoXml = @"
+### 3) Write a valid Autounattend.xml ###
+#   Using single-quoted here-string to avoid breaking on quotes
+$xmlTemplate = @'
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
 
   <settings pass="windowsPE">
-    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" versionScope="nonSxS"
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
       <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
       <InputLocale>en-US</InputLocale>
@@ -56,50 +56,71 @@ $autoXml = @"
       <UILanguage>en-US</UILanguage>
       <UserLocale>en-US</UserLocale>
     </component>
-    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" versionScope="nonSxS">
-      <DiskConfiguration><WillShowUI>OnError</WillShowUI><Disk wcm:action="add">
-        <DiskID>0</DiskID><WillWipeDisk>true</WillWipeDisk>
-        <CreatePartitions>
-          <CreatePartition wcm:action="add"><Order>1</Order><Type>Primary</Type><Size>16384</Size></CreatePartition>
-          <CreatePartition wcm:action="add"><Order>2</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
-        </CreatePartitions>
-        <ModifyPartitions>
-          <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>NTFS</Format><Label>System</Label><Active>true</Active></ModifyPartition>
-          <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID><Format>NTFS</Format><Label>Windows</Label></ModifyPartition>
-        </ModifyPartitions>
-      </Disk></DiskConfiguration>
-      <ImageInstall><OSImage><InstallFrom>
-        <MetaData wcm:action="add">
-          <Key>/IMAGE/NAME</Key>
-          <Value>Windows Server 2022 SERVERSTANDARDCORE</Value>
-        </MetaData>
-      </InstallFrom></OSImage></ImageInstall>
-      <UserData><AcceptEula>true</AcceptEula><FullName>Administrator</FullName><Organization>CyberArk</Organization></UserData>
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <DiskConfiguration>
+        <WillShowUI>OnError</WillShowUI>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add"><Order>1</Order><Type>Primary</Type><Size>16384</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>2</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>NTFS</Format><Label>System</Label><Active>true</Active></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID><Format>NTFS</Format><Label>Windows</Label></ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>Windows Server 2022 SERVERSTANDARDCORE</Value>
+            </MetaData>
+          </InstallFrom>
+        </OSImage>
+      </ImageInstall>
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>Administrator</FullName>
+        <Organization>CyberArk</Organization>
+      </UserData>
     </component>
   </settings>
 
   <settings pass="specialize">
-    <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" versionScope="nonSxS">
+    <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <Identification>
         <Credentials>
-          <Domain>$DomainName</Domain>
-          <Username>$DomainUser</Username>
+          <Domain>{{DOMAIN}}</Domain>
+          <Username>{{USER}}</Username>
           <Password>Cyberark1</Password>
         </Credentials>
-        <JoinDomain>$DomainName</JoinDomain>
+        <JoinDomain>{{DOMAIN}}</JoinDomain>
       </Identification>
     </component>
   </settings>
 
   <settings pass="oobeSystem">
-    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" versionScope="nonSxS">
-      <InputLocale>en-US</InputLocale><SystemLocale>en-US</SystemLocale>
-      <UILanguage>en-US</UILanguage><UserLocale>en-US</UserLocale>
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
     </component>
-    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" versionScope="nonSxS">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <AutoLogon>
         <Username>Administrator</Username>
-        <Password><Value>Cyberark1</Value><PlainText>true</PlainText></Password>
+        <Password>
+          <Value>Cyberark1</Value>
+          <PlainText>true</PlainText>
+        </Password>
         <Enabled>true</Enabled>
       </AutoLogon>
       <OOBE>
@@ -113,15 +134,21 @@ $autoXml = @"
   </settings>
 
 </unattend>
-"@
-$autoXml | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
+'@
+
+# inject your domain & user
+$xmlContent = $xmlTemplate `
+  -replace '{{DOMAIN}}', [Regex]::Escape($DomainName) `
+  -replace '{{USER}}',   [Regex]::Escape($DomainUser)
+
+$xmlContent | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
 Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
 ### 4) Fallback netmap.conf ###
 $wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
 $programData = Join-Path $env:ProgramData 'VMware'
 $pathsToFill = @(
-    Join-Path $wsDir 'netmap.conf'
+    Join-Path $wsDir       'netmap.conf'
     Join-Path $programData 'netmap.conf'
 )
 $netmapText = @"
@@ -198,47 +225,3 @@ terraform {
     vmworkstation = { source = "elsudano/vmworkstation"; version = ">=1.0.4" }
   }
 }
-provider "vmworkstation" {
-  user     = var.vmrest_user
-  password = var.vmrest_password
-  url      = "http://127.0.0.1:8697/api"
-}
-
-"@
-if ($InstallVault) {
-    $main += @"
-resource "vmworkstation_vm" "vault" {
-  sourceid     = "$BaseId"
-  denomination = "CyberArk-Vault"
-  processors   = 8
-  memory       = 32768
-  path         = "$DeployPath\CyberArk-Vault"
-}
-"@
-}
-foreach ($c in 'PVWA','CPM','PSM') {
-    $lower = $c.ToLower()
-    $main += @"
-resource "vmworkstation_vm" "$lower" {
-  sourceid     = "$BaseId"
-  denomination = "CyberArk-$c"
-  processors   = 4
-  memory       = 8192
-  path         = "$DeployPath\CyberArk-$c"
-}
-"@
-}
-$main | Set-Content (Join-Path $tfDir 'main.tf') -Encoding ASCII
-
-@"
-variable "vmrest_user"     { default = "$VmrestUser" }
-variable "vmrest_password" { default = "$VmrestPassword" }
-"@ | Set-Content (Join-Path $tfDir 'variables.tf') -Encoding ASCII
-
-Push-Location $tfDir
-terraform init -upgrade | Write-Host
-terraform plan -out=tfplan   | Write-Host
-terraform apply -auto-approve tfplan | Write-Host
-Pop-Location
-
-Write-Host "Deployment complete!" -ForegroundColor Green
