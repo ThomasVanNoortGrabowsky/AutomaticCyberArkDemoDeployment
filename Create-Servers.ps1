@@ -100,8 +100,8 @@ variable "iso_path" { default = "$hclPath" }
 source "vmware-iso" "vault_base" {
   vm_name           = "vault-base"
   iso_url           = "file:///$hclPath"
-  iso_checksum      = "$hash"
-  iso_checksum_type = "sha256"
+  checksum          = "$hash"
+  checksum_type     = "sha256"
   floppy_files      = ["Autounattend.xml"]
   communicator      = "winrm"
   winrm_username    = "Administrator"
