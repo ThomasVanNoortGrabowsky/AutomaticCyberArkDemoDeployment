@@ -69,15 +69,15 @@ $autoXml = @"
 $autoXml | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
 Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
-# -- 4) Write Minimal netmap.conf in BOTH locations --
-$wsDir = 'C:\Program Files (x86)\VMware\VMware Workstation'
+# 4) Write minimal netmap.conf to both locations
+$wsDir          = 'C:\Program Files (x86)\VMware\VMware Workstation'
 $programDataDir = Join-Path $env:ProgramData 'VMware'
-
-$pathsToFill = @(
-  Join-Path -Path $wsDir -ChildPath 'netmap.conf',
-  Join-Path -Path $programDataDir -ChildPath 'netmap.conf'
+$pathsToFill    = @(
+    Join-Path -Path $wsDir          -ChildPath 'netmap.conf'
+    Join-Path -Path $programDataDir -ChildPath 'netmap.conf'
 )
-$netmap = @"
+
+$netmapContent = @"
 # Minimal netmap.conf for Packer
 network0.name   = "Bridged"
 network0.device = "vmnet0"
@@ -86,11 +86,12 @@ network1.device = "vmnet1"
 network8.name   = "NAT"
 network8.device = "vmnet8"
 "@
+
 foreach ($p in $pathsToFill) {
-  $dir = Split-Path $p -Parent
-  if (-not (Test-Path $dir)) { New-Item -Path $dir -ItemType Directory -Force | Out-Null }
-  $netmap | Set-Content -Path $p -Encoding ASCII
-  Write-Host "-> Wrote fallback netmap.conf to $p" -ForegroundColor Green
+    $dir = Split-Path $p -Parent
+    if (-not (Test-Path $dir)) { New-Item -Path $dir -ItemType Directory -Force | Out-Null }
+    $netmapContent | Set-Content -Path $p -Encoding ASCII
+    Write-Host "• Wrote netmap.conf to $p"
 }
 
 # -- 5) Generate Packer HCL Template (force NAT network) --
