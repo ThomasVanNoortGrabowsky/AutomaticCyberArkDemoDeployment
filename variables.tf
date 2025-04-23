@@ -1,38 +1,38 @@
 variable "vmrest_user" {
-  description = "Username created by vmrest.exe --config"
+  description = "Username for vmrest API"
   type        = string
   default     = "vmrest"
 }
 
 variable "vmrest_password" {
-  description = "Password created by vmrest.exe --config"
+  description = "Password for vmrest API"
   type        = string
 }
 
 variable "vault_image_id" {
-  description = "ID of the golden Vault image to clone"
+  description = "ID of the Vault golden VM image"
   type        = string
 }
 
 variable "app_image_id" {
-  description = "ID of the golden image for PVWA/CPM/PSM clones (if different)"
+  description = "ID of the golden image for PVWA/CPM/PSM"
   type        = string
 }
 
 variable "vm_processors" {
-  description = "Number of vCPUs for the new VM"
+  description = "Number of vCPUs"
   type        = number
   default     = 2
 }
 
 variable "vm_memory" {
-  description = "Memory (MB) for the new VM"
+  description = "Memory in MB"
   type        = number
   default     = 2048
 }
 
 variable "vm_path" {
-  description = "Filesystem path where the new VM will be created"
+  description = "Path for the new VM"
   type        = string
   default     = "C:\\Users\\<YourName>\\Documents\\Virtual Machines\\TestVM-Terraform"
 }
