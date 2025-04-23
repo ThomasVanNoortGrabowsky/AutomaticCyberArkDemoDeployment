@@ -32,13 +32,43 @@ $DeployPath = Read-Host 'Enter the base folder path where VMs should be deployed
 #endregion
 
 #--- 1) prerequisites
+# Ensure Packer is installed
 if (-not (Get-Command packer -ErrorAction SilentlyContinue)) {
-  Write-Error "Packer not found. Install Packer and re-run."
-  exit 1
+    Write-Host "Packer not found. Installing via winget..." -ForegroundColor Yellow
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Start-Process winget -ArgumentList @(
+            'install',
+            '--id','HashiCorp.Packer',
+            '-e',
+            '--source','winget',
+            '--accept-package-agreements',
+            '--accept-source-agreements'
+        ) -NoNewWindow -Wait
+        # Refresh PATH
+        $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
+    } else {
+        Write-Error "winget not available to install Packer; please install Packer manually."
+        exit 1
+    }
 }
+# Ensure Terraform is installed
 if (-not (Get-Command terraform -ErrorAction SilentlyContinue)) {
-  Write-Error "Terraform not found. Install Terraform and re-run."
-  exit 1
+    Write-Host "Terraform not found. Installing via winget..." -ForegroundColor Yellow
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Start-Process winget -ArgumentList @(
+            'install',
+            '--id','HashiCorp.Terraform',
+            '-e',
+            '--source','winget',
+            '--accept-package-agreements',
+            '--accept-source-agreements'
+        ) -NoNewWindow -Wait
+        # Refresh PATH
+        $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
+    } else {
+        Write-Error "winget not available to install Terraform; please install Terraform manually."
+        exit 1
+    }
 }
 
 #--- 2) Write out Packer HCL template
