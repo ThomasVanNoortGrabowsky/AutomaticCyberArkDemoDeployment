@@ -70,10 +70,12 @@ $autoXml | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
 Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
 # -- 4) Write Minimal netmap.conf in BOTH locations --
-$wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
+$wsDir = 'C:\Program Files (x86)\VMware\VMware Workstation'
+$programDataDir = Join-Path $env:ProgramData 'VMware'
+
 $pathsToFill = @(
-  Join-Path $wsDir            'netmap.conf', 
-  Join-Path $env:ProgramData   'VMware\netmap.conf'
+  Join-Path -Path $wsDir -ChildPath 'netmap.conf',
+  Join-Path -Path $programDataDir -ChildPath 'netmap.conf'
 )
 $netmap = @"
 # Minimal netmap.conf for Packer
