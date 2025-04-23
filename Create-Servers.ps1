@@ -116,6 +116,18 @@ build { sources = ["source.vmware-iso.vault_base"] }
 $pkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding ASCII
 Write-Host '-> Packer template written.' -ForegroundColor Green
 
+#--- Ensure VMware network mapping file exists
+$sourceNetmap = 'C:\ProgramData\VMware\netmap.conf'
+$destNetmap   = 'C:\Program Files (x86)\VMware\VMware Workstation\netmap.conf'
+if (-not (Test-Path $destNetmap)) {
+    if (Test-Path $sourceNetmap) {
+        Copy-Item -Path $sourceNetmap -Destination $destNetmap -Force
+        Write-Host '-> netmap.conf copied to Workstation folder.' -ForegroundColor Green
+    } else {
+        Write-Warning 'netmap.conf not found under ProgramData; Packer network mapping may still fail.'
+    }
+}
+
 #--- 6) Run Packer build) Run Packer build) Run Packer build) Run Packer build
 Write-Host '-> Running Packer init & build...' -ForegroundColor Cyan
 $initOut = & $packerExe init template.pkr.hcl 2>&1; if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed:`n$initOut"; exit 1 }
