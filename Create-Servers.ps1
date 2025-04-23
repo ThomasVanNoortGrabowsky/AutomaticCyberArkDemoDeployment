@@ -5,9 +5,9 @@
 .DESCRIPTION
   1. Prompts for ISO path, REST-API credentials, Vault inclusion, deploy path, and domain join info.
   2. Generates Autounattend.xml for unattended Windows install with domain join.
-  3. Installs Packer & Terraform via winget if missing.
+  3. Installs Packer & Terraform if missing.
   4. Builds a golden "vault-base" VM image using Packer.
-  5. Ensures vmrest daemon is stopped and restarted (requires elevation), then retrieves the VM ID via Basic auth.
+  5. Ensures vmrest daemon is stopped/restarted (requires elevation), then retrieves the VM ID via Basic auth.
   6. Generates Terraform configs (main.tf, variables.tf) and applies them to clone Vault (optional) plus PVWA/CPM/PSM.
 #>
 
@@ -19,8 +19,8 @@ function Test-IsAdmin {
 }
 if (-not (Test-IsAdmin)) {
   Write-Host 'Restarting script as Administrator...' -ForegroundColor Yellow
-  $psPath = Join-Path $env:windir 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  Start-Process -FilePath $psPath -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"$PSCommandPath" -Verb RunAs
+  $psExe = Join-Path $env:windir 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  Start-Process -FilePath $psExe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$PSCommandPath`"" -Verb RunAs
   exit
 }
 
@@ -69,20 +69,20 @@ $UnattendXml = @"
 $UnattendXml | Set-Content -Path (Join-Path $PSScriptRoot 'Autounattend.xml') -Encoding UTF8
 Write-Host 'Autounattend.xml generated.' -ForegroundColor Green
 
-#--- 3) Install Packer & Terraform if missing (manual download for Packer)
-if (-not (Get-Command packer -ErrorAction SilentlyContinue)) {
+#--- 3) Install Packer & Terraform if missing
+$packerExe = Join-Path $PSScriptRoot 'packer-bin\packer.exe'
+if (-not (Test-Path $packerExe)) {
   Write-Host 'Downloading Packer...' -ForegroundColor Yellow
-  $ver = '1.8.6'; $zip = "${env:TEMP}\packer_${ver}.zip"; $url = "https://releases.hashicorp.com/packer/$ver/packer_${ver}_windows_amd64.zip"
+  $ver = '1.8.6'; $zip = "$env:TEMP\packer_${ver}.zip"; $url = "https://releases.hashicorp.com/packer/$ver/packer_${ver}_windows_amd64.zip"
   Invoke-WebRequest $url -OutFile $zip
-  $pd = Join-Path $PSScriptRoot 'packer-bin'; New-Item $pd -ItemType Directory -Force | Out-Null
+  $pd = Split-Path $packerExe -Parent; New-Item -Path $pd -ItemType Directory -Force | Out-Null
   Expand-Archive $zip -DestinationPath $pd -Force; Remove-Item $zip
-  $env:PATH = "$pd;$env:PATH"; Write-Host 'Packer ready.' -ForegroundColor Green
+  Write-Host 'Packer downloaded.' -ForegroundColor Green
 }
 if (-not (Get-Command terraform -ErrorAction SilentlyContinue)) {
   Write-Host 'Installing Terraform via winget...' -ForegroundColor Yellow
   Start-Process winget -ArgumentList 'install','--id','HashiCorp.Terraform','-e','--accept-package-agreements','--accept-source-agreements' -NoNewWindow -Wait
-  $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
-  Write-Host 'Terraform ready.' -ForegroundColor Green
+  Write-Host 'Terraform installed.' -ForegroundColor Green
 }
 
 #--- 4) Compute ISO checksum
@@ -109,39 +109,34 @@ source "vmware-iso" "vault_base" {
 }
 build { sources = ["source.vmware-iso.vault_base"] }
 "@
-$PkrHcl | Set-Content (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
+$PkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
 Write-Host 'Packer template written.' -ForegroundColor Green
 
-#--- 6) Build golden VM
+#--- 6) Build golden VM image
 Write-Host 'Running Packer build...' -ForegroundColor Cyan
-& packer init template.pkr.hcl | Out-Null
-& packer build -force template.pkr.hcl | Out-Null
+& $packerExe init template.pkr.hcl | Out-Null
+& $packerExe build -force template.pkr.hcl | Out-Null
 
-#--- 7) Manage vmrest and retrieve VM ID
+#--- 7) Stop & restart vmrest daemon, retrieve VM ID
 $vmrestExe = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe'
 if (-not (Test-Path $vmrestExe)) { Write-Error "vmrest.exe not found at $vmrestExe"; exit 1 }
-# Stop and restart
 Get-Process vmrest -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Process -FilePath $vmrestExe -ArgumentList '-b' -WindowStyle Hidden
 Start-Sleep -Seconds 5
-
-# Basic auth header
 $url     = 'http://127.0.0.1:8697/api/vms'
 $pair    = "${VmrestUser}:${VmrestPassword}"
 $token   = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
 $headers = @{ Authorization = "Basic $token" }
-
 try {
   $VMs    = Invoke-RestMethod -Uri $url -Headers $headers
   $BaseId = ($VMs | Where-Object name -eq 'vault-base').id
   Write-Host "Golden VM ID: $BaseId" -ForegroundColor Green
 } catch {
-  Write-Error "vmrest auth failed. Rerun 'vmrest.exe --config' and ensure API is running."; exit 1
+  Write-Error "Authentication to vmrest failed. Rerun 'vmrest.exe --config' and ensure service is running."; exit 1
 }
 
 #--- 8) Generate Terraform configs
 $tfDir = Join-Path $PSScriptRoot 'terraform'; if (-not (Test-Path $tfDir)) { New-Item $tfDir -ItemType Directory | Out-Null }
-
 $MainTf = @"
 terraform {
   required_providers {
@@ -155,8 +150,7 @@ provider "vmworkstation" {
   url      = "http://127.0.0.1:8697/api"
 }
 "@
-if ($InstallVault) {
-  $MainTf += @"
+if ($InstallVault) { $MainTf += @"
 resource "vmworkstation_vm" "vault" {
   sourceid     = "$BaseId"
   denomination = "CyberArk-Vault"
@@ -164,8 +158,7 @@ resource "vmworkstation_vm" "vault" {
   memory       = 32768
   path         = "$DeployPath\CyberArk-Vault"
 }
-"@
-}
+"@ }
 foreach ($comp in 'PVWA','CPM','PSM') {
   $MainTf += @"
 resource "vmworkstation_vm" "${comp.ToLower()}" {
@@ -177,15 +170,14 @@ resource "vmworkstation_vm" "${comp.ToLower()}" {
 }
 "@
 }
-$MainTf | Set-Content (Join-Path $tfDir 'main.tf') -Encoding UTF8
-
+$MainTf | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
 $VarsTf = @"
 variable "vmrest_user" { default = "$VmrestUser" }
 variable "vmrest_password" { default = "$VmrestPassword" }
 "@
-$VarsTf | Set-Content (Join-Path $tfDir 'variables.tf') -Encoding UTF8
+$VarsTf | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
 
-#--- 9) Terraform deploy
+#--- 9) Run Terraform deploy
 Write-Host 'Deploying via Terraform...' -ForegroundColor Cyan
 Push-Location $tfDir
 terraform init -upgrade | Out-Null
