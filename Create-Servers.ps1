@@ -94,14 +94,12 @@ Write-Host '-> Calculating ISO checksum...' -ForegroundColor Cyan
 $hash = (Get-FileHash -Path $IsoPath -Algorithm SHA256).Hash
 
 #--- 5) Write Packer template
-$hclPath = $IsoPath -replace '\\','/'
+$hclPath = $IsoPath -replace '\','/'
 $pkrHcl = @"
 variable "iso_path" { default = "$hclPath" }
 source "vmware-iso" "vault_base" {
   vm_name           = "vault-base"
   iso_url           = "file:///$hclPath"
-  checksum_type     = "sha256"
-  checksum          = "$hash"
   floppy_files      = ["Autounattend.xml"]
   communicator      = "winrm"
   winrm_username    = "Administrator"
@@ -111,12 +109,12 @@ source "vmware-iso" "vault_base" {
   memory            = 32768
   shutdown_command  = "shutdown /s /t 5 /f /d p:4:1 /c 'Packer Shutdown'"
 }
-build           { sources = ["source.vmware-iso.vault_base"] }
+build { sources = ["source.vmware-iso.vault_base"] }
 "@
 $pkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
 Write-Host '-> Packer template written.' -ForegroundColor Green
 
-#--- 6) Run Packer build
+#--- 6) Run Packer build) Run Packer build
 Write-Host '-> Running Packer init & build...' -ForegroundColor Cyan
 $initOut = & $packerExe init template.pkr.hcl 2>&1
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed:`n$initOut"; exit 1 }
