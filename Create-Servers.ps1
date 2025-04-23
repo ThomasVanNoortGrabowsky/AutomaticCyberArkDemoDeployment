@@ -1,20 +1,19 @@
 # Create-Servers.ps1
-# Automated CyberArk lab: unattended ISO → Packer golden image → Terraform clones
+# CyberArk lab: Unattended ISO → Packer golden image → Terraform clones
 
 $ErrorActionPreference = 'Stop'
 
-# 0) Elevate to Administrator if needed
+# -- 0) Elevate to Admin --
 if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
     ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   Start-Process pwsh "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
   exit
 }
 
-# 1) Download Packer locally if missing
+# -- 1) Download Packer Locally --
 $packerVersion = "1.11.4"
 $installDir    = Join-Path $PSScriptRoot "packer-bin"
 $packerExe     = Join-Path $installDir "packer.exe"
-
 if (-not (Test-Path $packerExe)) {
   Write-Host "Downloading Packer v$packerVersion…" -ForegroundColor Cyan
   if (-not (Test-Path $installDir)) { New-Item -Path $installDir -ItemType Directory | Out-Null }
@@ -27,7 +26,7 @@ if (-not (Test-Path $packerExe)) {
   Write-Host "-> Packer installed at $installDir" -ForegroundColor Green
 }
 
-# 2) Prompt for required inputs
+# -- 2) Prompt for Inputs --
 $IsoPath        = Read-Host "1) Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)"
 $VmrestUser     = Read-Host "2) vmrest API username"
 $VmrestSecure   = Read-Host "3) vmrest API password" -AsSecureString
@@ -39,7 +38,7 @@ $DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
 $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
-# 3) Generate Autounattend.xml for unattended Windows install + domain join
+# -- 3) Write Autounattend.xml for Unattended + Domain-Join --
 $autoXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
@@ -51,11 +50,7 @@ $autoXml = @"
           <Value>Windows Server 2022 SERVERSTANDARDCORE</Value>
         </MetaData>
       </InstallFrom><WillShowUI>OnError</WillShowUI></OSImage></ImageInstall>
-      <UserData>
-        <AcceptEula>true</AcceptEula>
-        <FullName>Administrator</FullName>
-        <Organization>CyberArk</Organization>
-      </UserData>
+      <UserData><AcceptEula>true</AcceptEula><FullName>Administrator</FullName><Organization>CyberArk</Organization></UserData>
     </component>
   </settings>
   <settings pass="specialize">
@@ -74,30 +69,36 @@ $autoXml = @"
 $autoXml | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
 Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
-# 4) Fallback netmap.conf (ensures vmnet8 is defined)
-$wsDir = 'C:\Program Files (x86)\VMware\VMware Workstation'
-$nf    = Join-Path $wsDir 'netmap.conf'
-if (-not (Test-Path $nf)) {
-  @"
-# Minimal netmap.conf
+# -- 4) Write Minimal netmap.conf in BOTH locations --
+$wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
+$pathsToFill = @(
+  Join-Path $wsDir            'netmap.conf', 
+  Join-Path $env:ProgramData   'VMware\netmap.conf'
+)
+$netmap = @"
+# Minimal netmap.conf for Packer
 network0.name   = "Bridged"
 network0.device = "vmnet0"
 network1.name   = "HostOnly"
 network1.device = "vmnet1"
 network8.name   = "NAT"
 network8.device = "vmnet8"
-"@ | Set-Content -Path $nf -Encoding ASCII
-  Write-Host "-> Fallback netmap.conf written." -ForegroundColor Green
+"@
+foreach ($p in $pathsToFill) {
+  $dir = Split-Path $p -Parent
+  if (-not (Test-Path $dir)) { New-Item -Path $dir -ItemType Directory -Force | Out-Null }
+  $netmap | Set-Content -Path $p -Encoding ASCII
+  Write-Host "-> Wrote fallback netmap.conf to $p" -ForegroundColor Green
 }
 
-# 5) Create Packer HCL template with explicit NAT network
-$hclIsoPath = $IsoPath.Replace('\','/')
-$checksum   = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
-$packerHcl = @"
+# -- 5) Generate Packer HCL Template (force NAT network) --
+$hclIso   = $IsoPath.Replace('\','/')
+$checksum = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
+$hcl      = @"
 source "vmware-iso" "vault_base" {
-  iso_url           = "file:///$hclIsoPath"
+  iso_url           = "file:///$hclIso"
   iso_checksum      = "sha256:$checksum"
-  network           = "nat"                           # ← bypass netmap.conf lookup :contentReference[oaicite:1]{index=1}
+  network           = "nat"                         # ← Force NAT, skip any lookup errors :contentReference[oaicite:3]{index=3}
   communicator      = "winrm"
   winrm_username    = "Administrator"
   winrm_password    = "Cyberark1"
@@ -109,17 +110,17 @@ source "vmware-iso" "vault_base" {
 }
 build { sources = ["source.vmware-iso.vault_base"] }
 "@
-Set-Content "$PSScriptRoot\template.pkr.hcl" $packerHcl -Encoding ASCII
+Set-Content "$PSScriptRoot\template.pkr.hcl" $hcl -Encoding ASCII
 Write-Host "-> Packer template written." -ForegroundColor Green
 
-# 6) Run Packer init & build
+# -- 6) Run Packer init & build --
 Write-Host "-> Running Packer init & build…" -ForegroundColor Cyan
 & $packerExe init "$PSScriptRoot\template.pkr.hcl" | Write-Host
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed"; exit 1 }
 & $packerExe build -force "$PSScriptRoot\template.pkr.hcl" | Write-Host
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed"; exit 1 }
 
-# 7) Restart vmrest and fetch the golden VM ID using Basic Auth
+# -- 7) Restart vmrest & fetch Golden VM ID via Basic Auth --
 Stop-Process -Name vmrest -Force -ErrorAction SilentlyContinue
 Start-Process "$wsDir\vmrest.exe" -ArgumentList "-b" -WindowStyle Hidden
 Start-Sleep 5
@@ -135,11 +136,12 @@ try {
 $BaseId = ($VMs | Where-Object name -eq 'vault_base').id
 Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
 
-# 8) Generate & apply Terraform configurations
+# -- 8) Generate &  Apply Terraform Project --
 $tfDir = Join-Path $PSScriptRoot 'terraform'
 if (Test-Path $tfDir) { Remove-Item $tfDir -Recurse -Force }
 New-Item $tfDir -ItemType Directory | Out-Null
 
+# main.tf
 $main = @"
 terraform {
   required_providers {
@@ -178,12 +180,14 @@ resource "vmworkstation_vm" "$lower" {
 }
 Set-Content (Join-Path $tfDir 'main.tf') $main -Encoding ASCII
 
+# variables.tf
 $vars = @"
 variable "vmrest_user"    { default = "$VmrestUser" }
 variable "vmrest_password"{ default = "$VmrestPassword" }
 "@
 Set-Content (Join-Path $tfDir 'variables.tf') $vars -Encoding ASCII
 
+# Deploy
 Push-Location $tfDir
 terraform init -upgrade | Write-Host
 terraform plan -out=tfplan | Write-Host
