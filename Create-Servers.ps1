@@ -144,7 +144,7 @@ $BaseId = ($vms | Where-Object { $_.name -eq 'vault-base' }).id
 Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
 
 #--- 8) Generate Terraform configs
-$tfDir = Join-Path $PSScriptRoot 'terraform'; if (-not (Test-Path $tfDir)) { New-Item $tfDir -ItemType Directory | Out-Null }
+$tfDir = Join-Path $PSScriptRoot 'terraform'; if (-not (Test-Path $tfDir)) { New-Item -ItemType Directory -Path $tfDir | Out-Null }
 $main = @"
 terraform {
   required_providers {
@@ -179,3 +179,27 @@ resource "vmworkstation_vm" "$($c.ToLower())" {
   path         = "$DeployPath\CyberArk-$c"
 }
 "@
+}
+
+# Write Terraform main.tf
+$main | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
+
+# Generate variables.tf
+$vars = @"
+variable "vmrest_user" {
+  default = "$VmrestUser"
+}
+variable "vmrest_password" {
+  default = "$VmrestPassword"
+}
+"@
+$vars | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
+
+#--- 9) Run Terraform deploy
+Write-Host '-> Deploying via Terraform...' -ForegroundColor Cyan
+Push-Location $tfDir
+terraform init -upgrade | Out-Null
+terraform plan -out=tfplan
+terraform apply -auto-approve tfplan
+Pop-Location
+Write-Host 'Deployment complete!' -ForegroundColor Green
