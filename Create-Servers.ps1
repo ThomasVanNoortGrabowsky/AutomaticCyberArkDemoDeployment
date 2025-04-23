@@ -40,12 +40,17 @@ $DomainName   = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser   = Read-Host "7) Domain join user (with rights)"
 
 ### 3) Unattend XML ###
-$xml = @'
+$xmlTemplate = @'
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
 
+  <!-- WINDOWSPE PASS: language + image selection -->
   <settings pass="windowsPE">
-    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" versionScope="nonSxS"
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
       <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
       <InputLocale>en-US</InputLocale>
@@ -53,21 +58,12 @@ $xml = @'
       <UILanguage>en-US</UILanguage>
       <UserLocale>en-US</UserLocale>
     </component>
-    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" versionScope="nonSxS">
-      <DiskConfiguration>
-        <WillShowUI>OnError</WillShowUI>
-        <Disk wcm:action="add">
-          <DiskID>0</DiskID><WillWipeDisk>true</WillWipeDisk>
-          <CreatePartitions>
-            <CreatePartition wcm:action="add"><Order>1</Order><Type>Primary</Type><Size>16384</Size></CreatePartition>
-            <CreatePartition wcm:action="add"><Order>2</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
-          </CreatePartitions>
-          <ModifyPartitions>
-            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>NTFS</Format><Label>System</Label><Active>true</Active></ModifyPartition>
-            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID><Format>NTFS</Format><Label>Windows</Label></ModifyPartition>
-          </ModifyPartitions>
-        </Disk>
-      </DiskConfiguration>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
       <ImageInstall>
         <OSImage>
           <InstallFrom>
@@ -80,14 +76,17 @@ $xml = @'
       </ImageInstall>
       <UserData>
         <AcceptEula>true</AcceptEula>
-        <FullName>Administrator</FullName>
-        <Organization>CyberArk</Organization>
       </UserData>
     </component>
   </settings>
 
+  <!-- SPECIALIZE PASS: domain join -->
   <settings pass="specialize">
-    <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" versionScope="nonSxS">
+    <component name="Microsoft-Windows-UnattendedJoin"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
       <Identification>
         <Credentials>
           <Domain>__DOMAIN__</Domain>
@@ -99,17 +98,37 @@ $xml = @'
     </component>
   </settings>
 
+  <!-- OOBE PASS: skip EULA & auto-logon -->
   <settings pass="oobeSystem">
-    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" versionScope="nonSxS">
-      <InputLocale>en-US</InputLocale><SystemLocale>en-US</SystemLocale><UILanguage>en-US</UILanguage><UserLocale>en-US</UserLocale>
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
     </component>
-    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" versionScope="nonSxS">
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
       <AutoLogon>
         <Username>Administrator</Username>
-        <Password><Value>Cyberark1</Value><PlainText>true</PlainText></Password>
+        <Password>
+          <Value>Cyberark1</Value>
+          <PlainText>true</PlainText>
+        </Password>
         <Enabled>true</Enabled>
       </AutoLogon>
-      <OOBE><HideEULAPage>true</HideEULAPage><NetworkLocation>Work</NetworkLocation><ProtectYourPC>1</ProtectYourPC></OOBE>
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>1</ProtectYourPC>
+      </OOBE>
       <RegisteredOwner>Administrator</RegisteredOwner>
       <RegisteredOrganization>CyberArk</RegisteredOrganization>
     </component>
@@ -118,11 +137,13 @@ $xml = @'
 </unattend>
 '@
 
-$xml = $xml -replace '__DOMAIN__', [Regex]::Escape($DomainName) `
-           -replace '__USER__',   [Regex]::Escape($DomainUser)
-Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $xml -Encoding ASCII
-Write-Host "-> Autounattend.xml done." -ForegroundColor Green
+# substitute your domain & user
+$autounattend = $xmlTemplate `
+  -replace '__DOMAIN__', [Regex]::Escape($DomainName) `
+  -replace '__USER__',   [Regex]::Escape($DomainUser)
 
+Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $autounattend -Encoding ASCII
+Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 ### 4) Minimal netmap.conf ###
 $ws    = 'C:\Program Files (x86)\VMware\VMware Workstation'
 $pdata = Join-Path $env:ProgramData 'VMware'
