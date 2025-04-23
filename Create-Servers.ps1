@@ -2,40 +2,36 @@
   Create-Servers.ps1
   -------------------
   Automated CyberArk lab:
-    1) Unattended Windows 11 ISO → Packer golden image
+    1) Unattended Windows ISO → Packer golden image
     2) vmrest-backed Terraform clones of Vault (optional) + PVWA/CPM/PSM
 #>
 
 $ErrorActionPreference = 'Stop'
 
-### 0) Elevate to Administrator ###
+### 0) Elevate to Admin ###
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
     ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Start-Process pwsh "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
     exit
 }
 
-### 1) Ensure Packer is installed locally ###
+### 1) Ensure Packer ###
 $packerVersion = "1.11.4"
 $installDir    = Join-Path $PSScriptRoot "packer-bin"
 $packerExe     = Join-Path $installDir "packer.exe"
 if (-not (Test-Path $packerExe)) {
     Write-Host "Downloading Packer v$packerVersion…" -ForegroundColor Cyan
-    New-Item -Path $installDir -ItemType Directory -Force | Out-Null
+    New-Item $installDir -ItemType Directory -Force | Out-Null
     $zip = Join-Path $installDir "packer.zip"
-    Invoke-WebRequest `
-      -Uri "https://releases.hashicorp.com/packer/$packerVersion/packer_${packerVersion}_windows_amd64.zip" `
-      -OutFile $zip
-    Expand-Archive -Path $zip -DestinationPath $installDir -Force
+    Invoke-WebRequest -Uri "https://releases.hashicorp.com/packer/$packerVersion/packer_${packerVersion}_windows_amd64.zip" -OutFile $zip
+    Expand-Archive $zip $installDir -Force
     Remove-Item $zip
-    Write-Host "-> Packer installed at $installDir" -ForegroundColor Green
+    Write-Host "-> Packer installed." -ForegroundColor Green
 }
 
-### 2) Prompt for user inputs ###
-$IsoPath        = Read-Host "1) Windows 11 ISO path (e.g. C:\ISOs\Win11_21H2.iso)"
-if (-not (Test-Path $IsoPath -PathType Leaf)) {
-    Write-Error "ISO not found at '$IsoPath'"; exit 1
-}
+### 2) Prompt for inputs ###
+$IsoPath        = Read-Host "1) Windows ISO path (e.g. C:\ISOs\WIN11.iso)"
+if (-not (Test-Path $IsoPath -PathType Leaf)) { Write-Error "ISO not found"; exit 1 }
 $VmrestUser     = Read-Host "2) vmrest API username"
 $VmrestSecure   = Read-Host "3) vmrest API password" -AsSecureString
 $VmrestPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
@@ -46,68 +42,38 @@ $DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
 $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
-### 3) Generate Autounattend.xml ###
-$xmlTemplate = @'
+### 3) Generate Autounattend.xml with 4-partition layout + domain join ###
+$xml = @'
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
 
-  <!-- WINDOWSPE PASS: locale + create EFI, MSR, OS partitions -->
+  <!-- windowsPE PASS: DiskConfiguration (500+100+128+rest), EULA, image selection -->
   <settings pass="windowsPE">
-    <component name="Microsoft-Windows-International-Core-WinPE"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
-      <InputLocale>en-US</InputLocale>
-      <SystemLocale>en-US</SystemLocale>
-      <UILanguage>en-US</UILanguage>
-      <UserLocale>en-US</UserLocale>
-    </component>
-
-    <component name="Microsoft-Windows-Setup"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
           <WillWipeDisk>true</WillWipeDisk>
           <CreatePartitions>
-            <!-- EFI -->
-            <CreatePartition wcm:action="add">
-              <Order>1</Order>
-              <Type>EFI</Type>
-              <Size>100</Size>
-            </CreatePartition>
-            <!-- MSR -->
-            <CreatePartition wcm:action="add">
-              <Order>2</Order>
-              <Type>MSR</Type>
-              <Size>16</Size>
-            </CreatePartition>
-            <!-- Windows -->
-            <CreatePartition wcm:action="add">
-              <Order>3</Order>
-              <Type>Primary</Type>
-              <Extend>true</Extend>
-            </CreatePartition>
+            <CreatePartition wcm:action="add"><Order>1</Order><Size>500</Size><Type>Primary</Type></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>2</Order><Size>100</Size><Type>EFI</Type></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>3</Order><Size>128</Size><Type>MSR</Type></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>4</Order><Extend>true</Extend><Type>Primary</Type></CreatePartition>
           </CreatePartitions>
           <ModifyPartitions>
-            <!-- Format EFI -->
             <ModifyPartition wcm:action="add">
-              <Order>1</Order>
-              <PartitionID>1</PartitionID>
-              <Format>FAT32</Format>
-              <Label>System</Label>
+              <Order>1</Order><PartitionID>1</PartitionID><Label>Recovery</Label><Format>NTFS</Format>
+              <TypeID>de94bba4-06d1-4d40-a16a-bfd50179d6ac</TypeID>
             </ModifyPartition>
-            <!-- Format Windows -->
             <ModifyPartition wcm:action="add">
-              <Order>2</Order>
-              <PartitionID>3</PartitionID>
-              <Format>NTFS</Format>
-              <Label>Windows</Label>
+              <Order>2</Order><PartitionID>2</PartitionID><Label>System</Label><Format>FAT32</Format>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order><PartitionID>3</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>4</Order><PartitionID>4</PartitionID><Format>NTFS</Format>
             </ModifyPartition>
           </ModifyPartitions>
           <WillShowUI>OnError</WillShowUI>
@@ -116,51 +82,61 @@ $xmlTemplate = @'
 
       <UserData>
         <AcceptEula>true</AcceptEula>
+        <ProductKey><WillShowUI>Never</WillShowUI></ProductKey>
       </UserData>
 
       <ImageInstall>
         <OSImage>
           <InstallFrom>
-            <MetaData wcm:action="add">
-              <Key>/IMAGE/INDEX</Key>
-              <Value>4</Value>    <!-- or change to your desired index -->
-            </MetaData>
+            <MetaData wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>4</Value></MetaData>
           </InstallFrom>
           <InstallTo>
-            <DiskID>0</DiskID>
-            <PartitionID>3</PartitionID>
+            <DiskID>0</DiskID><PartitionID>4</PartitionID>
           </InstallTo>
           <WillShowUI>OnError</WillShowUI>
+          <InstallToAvailablePartition>false</InstallToAvailablePartition>
         </OSImage>
       </ImageInstall>
     </component>
+
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS">
+      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
   </settings>
 
-  <!-- SPECIALIZE PASS: join domain -->
+  <!-- specialize PASS: join your domain -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-UnattendedJoin"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
+               processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS">
       <Identification>
         <Credentials>
-          <Domain>__DOMAIN__</Domain>
-          <Username>__USER__</Username>
+          <Domain>${DomainName}</Domain>
+          <Username>${DomainUser}</Username>
           <Password>Cyberark1</Password>
         </Credentials>
-        <JoinDomain>__DOMAIN__</JoinDomain>
+        <JoinDomain>${DomainName}</JoinDomain>
       </Identification>
     </component>
   </settings>
 
-  <!-- OOBE PASS: auto-logon -->
+  <!-- oobeSystem PASS: set admin password + auto-logon -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
+               processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS">
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>Cyberark1</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
       <AutoLogon>
         <Enabled>true</Enabled>
         <Username>Administrator</Username>
@@ -176,13 +152,9 @@ $xmlTemplate = @'
 </unattend>
 '@
 
-# inject your domain & user
-$autounattend = $xmlTemplate `
-  -replace '__DOMAIN__', [Regex]::Escape($DomainName) `
-  -replace '__USER__',   [Regex]::Escape($DomainUser)
-
-Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $autounattend -Encoding ASCII
-Write-Host "-> Autounattend.xml generated (fixed DiskConfiguration)." -ForegroundColor Green
+# Write ASCII (no BOM)
+Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $xml -Encoding ASCII
+Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
 ### 4) Write minimal netmap.conf ###
 $wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
