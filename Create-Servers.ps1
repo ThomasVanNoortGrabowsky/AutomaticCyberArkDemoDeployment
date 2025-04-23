@@ -94,13 +94,14 @@ Write-Host '-> Calculating ISO checksum...' -ForegroundColor Cyan
 $hash = (Get-FileHash -Path $IsoPath -Algorithm SHA256).Hash
 
 #--- 5) Write Packer template
-# convert Windows backslashes to forward slashes for HCL
-$hclPath = $IsoPath.Replace('\','/')
+$hclPath = $IsoPath.Replace('\\','/')
 $pkrHcl = @"
 variable "iso_path" { default = "$hclPath" }
 source "vmware-iso" "vault_base" {
   vm_name           = "vault-base"
   iso_url           = "file:///$hclPath"
+  iso_checksum      = "$hash"
+  iso_checksum_type = "sha256"
   floppy_files      = ["Autounattend.xml"]
   communicator      = "winrm"
   winrm_username    = "Administrator"
@@ -112,16 +113,13 @@ source "vmware-iso" "vault_base" {
 }
 build { sources = ["source.vmware-iso.vault_base"] }
 "@
-# write template as UTF8
 $pkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
 Write-Host '-> Packer template written.' -ForegroundColor Green
 
 #--- 6) Run Packer build
 Write-Host '-> Running Packer init & build...' -ForegroundColor Cyan
-$initOut = & $packerExe init template.pkr.hcl 2>&1
-if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed:`n$initOut"; exit 1 }
-$buildOut = & $packerExe build -force template.pkr.hcl 2>&1
-if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed:`n$buildOut"; exit 1 }
+$initOut = & $packerExe init template.pkr.hcl 2>&1; if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed:`n$initOut"; exit 1 }
+$buildOut = & $packerExe build -force template.pkr.hcl 2>&1; if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed:`n$buildOut"; exit 1 }
 
 #--- 7) Stop & restart vmrest daemon, then fetch VM ID
 $vmrest = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe'
@@ -181,24 +179,3 @@ resource "vmworkstation_vm" "$($c.ToLower())" {
   path         = "$DeployPath\CyberArk-$c"
 }
 "@
-}
-$main | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
-
-$vars = @"
-variable "vmrest_user" {
-  default = "$VmrestUser"
-}
-variable "vmrest_password" {
-  default = "$VmrestPassword"
-}
-"@
-$vars | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
-
-#--- 9) Run Terraform deploy
-Write-Host '-> Deploying via Terraform...' -ForegroundColor Cyan
-Push-Location $tfDir
-terraform init -upgrade | Out-Null
-terraform plan -out=tfplan
-terraform apply -auto-approve tfplan
-Pop-Location
-Write-Host 'Deployment complete!' -ForegroundColor Green
