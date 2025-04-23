@@ -1,22 +1,22 @@
 # Create-Servers.ps1
-# Automated CyberArk lab: unattended ISO → Packer golden image → Terraform clones
+# Automated CyberArk lab: Unattended ISO → Packer golden image → Terraform clones
 
 $ErrorActionPreference = 'Stop'
 
-# 0) Elevate if not already Administrator
+# 0) Elevate to Administrator if needed
 if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
     ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   Start-Process pwsh "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
   exit
 }
 
-# 1) Ensure Packer is available locally
+# 1) Ensure local Packer install
 $packerVersion = "1.11.4"
 $installDir    = Join-Path $PSScriptRoot "packer-bin"
 $packerExe     = Join-Path $installDir "packer.exe"
 if (-not (Test-Path $packerExe)) {
   Write-Host "Downloading Packer v$packerVersion…" -ForegroundColor Cyan
-  if (-not (Test-Path $installDir)) { New-Item -Path $installDir -ItemType Directory | Out-Null }
+  if (-not (Test-Path $installDir)) { New-Item $installDir -ItemType Directory | Out-Null }
   $zip = Join-Path $installDir "packer.zip"
   Invoke-WebRequest `
     -Uri "https://releases.hashicorp.com/packer/$packerVersion/packer_${packerVersion}_windows_amd64.zip" `
@@ -26,7 +26,7 @@ if (-not (Test-Path $packerExe)) {
   Write-Host "-> Packer installed at $installDir" -ForegroundColor Green
 }
 
-# 2) Prompt the user for all required inputs
+# 2) User inputs
 $IsoPath        = Read-Host "1) Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)"
 $VmrestUser     = Read-Host "2) vmrest API username"
 $VmrestSecure   = Read-Host "3) vmrest API password" -AsSecureString
@@ -38,16 +38,16 @@ $DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
 $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
-# 3) Generate the Autounattend.xml
+# 3) Corrected Autounattend.xml
 $autoXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
 
-  <!-- windowsPE pass: language/keyboard + disk setup -->
   <settings pass="windowsPE">
-    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
       <InputLocale>en-US</InputLocale>
       <SystemLocale>en-US</SystemLocale>
       <UILanguage>en-US</UILanguage>
@@ -87,7 +87,6 @@ $autoXml = @"
     </component>
   </settings>
 
-  <!-- specialize pass: domain join -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" versionScope="nonSxS">
       <Identification>
@@ -101,7 +100,6 @@ $autoXml = @"
     </component>
   </settings>
 
-  <!-- oobeSystem pass: locale + autologon + hide EULA -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" versionScope="nonSxS">
       <InputLocale>en-US</InputLocale>
@@ -130,12 +128,12 @@ $autoXml = @"
 $autoXml | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
 Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
-# 4) Write minimal netmap.conf to both ProgramData and Program Files locations
+# 4) Fallback netmap.conf (both locations)
 $wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
-$programData = Join-Path $env:ProgramData 'VMware'
+$pdDir       = Join-Path $env:ProgramData 'VMware'
 $pathsToFill = @(
-  Join-Path -Path $wsDir       -ChildPath 'netmap.conf'
-  Join-Path -Path $programData -ChildPath 'netmap.conf'
+Join-Path -Path $wsDir -ChildPath 'netmap.conf'
+Join-Path -Path $pdDir -ChildPath 'netmap.conf'
 )
 $netmapContent = @"
 # Minimal netmap.conf for Packer
@@ -153,22 +151,22 @@ foreach ($p in $pathsToFill) {
   Write-Host "-> Wrote fallback netmap.conf to $p" -ForegroundColor Green
 }
 
-# 5) Build Packer HCL template with explicit NAT network
+# 5) Packer HCL with explicit NAT
 $hclIso   = $IsoPath.Replace('\','/')
 $checksum = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
 $packerHcl = @"
 source "vmware-iso" "vault_base" {
-  iso_url           = "file:///$hclIso"
-  iso_checksum      = "sha256:$checksum"
-  network           = "nat"
-  communicator      = "winrm"
-  winrm_username    = "Administrator"
-  winrm_password    = "Cyberark1"
-  floppy_files      = ["Autounattend.xml"]
-  disk_size         = 81920
-  cpus              = 8
-  memory            = 32768
-  shutdown_command  = "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\""
+  iso_url          = "file:///$hclIso"
+  iso_checksum     = "sha256:$checksum"
+  network          = "nat"
+  communicator     = "winrm"
+  winrm_username   = "Administrator"
+  winrm_password   = "Cyberark1"
+  floppy_files     = ["Autounattend.xml"]
+  disk_size        = 81920
+  cpus             = 8
+  memory           = 32768
+  shutdown_command = "shutdown /s /t 5 /f /d p:4:1 /c `"Packer Shutdown`""
 }
 build { sources = ["source.vmware-iso.vault_base"] }
 "@
@@ -177,13 +175,13 @@ Write-Host "-> Packer template written." -ForegroundColor Green
 
 # 6) Run Packer
 Write-Host "-> Running Packer init & build…" -ForegroundColor Cyan
-& $packerExe init "$PSScriptRoot\template.pkr.hcl" | Write-Host
+& $packerExe init "$PSScriptRoot\template.pkr.hcl"
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed"; exit 1 }
-& $packerExe build -force "$PSScriptRoot\template.pkr.hcl" | Write-Host
+& $packerExe build -force "$PSScriptRoot\template.pkr.hcl"
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed"; exit 1 }
 
 # 7) Restart vmrest + fetch golden VM ID
-Stop-Process -Name vmrest -ErrorAction SilentlyContinue -Force
+Stop-Process -Name vmrest -Force -ErrorAction SilentlyContinue
 Start-Process "$wsDir\vmrest.exe" -ArgumentList "-b" -WindowStyle Hidden
 Start-Sleep 5
 $url     = 'http://127.0.0.1:8697/api/vms'
@@ -198,7 +196,7 @@ try {
 $BaseId = ($VMs | Where-Object name -eq 'vault_base').id
 Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
 
-# 8) Generate & apply Terraform configs
+# 8) Generate & apply Terraform
 $tfDir = Join-Path $PSScriptRoot 'terraform'
 if (Test-Path $tfDir) { Remove-Item $tfDir -Recurse -Force }
 New-Item $tfDir -ItemType Directory | Out-Null
@@ -248,9 +246,9 @@ variable "vmrest_password"{ default = "$VmrestPassword" }
 Set-Content (Join-Path $tfDir 'variables.tf') $vars -Encoding ASCII
 
 Push-Location $tfDir
-terraform init -upgrade | Write-Host
-terraform plan -out=tfplan | Write-Host
-terraform apply -auto-approve tfplan | Write-Host
+terraform init -upgrade
+terraform plan -out=tfplan
+terraform apply -auto-approve tfplan
 Pop-Location
 
 Write-Host "Deployment complete!" -ForegroundColor Green
