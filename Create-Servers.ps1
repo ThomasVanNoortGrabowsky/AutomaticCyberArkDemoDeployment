@@ -76,7 +76,6 @@ variable "iso_path" {
 source "vmware-iso" "vault_base" {
   vm_name           = "cyberark-vault-base"
   iso_url           = "file:///$hclIsoPath"
-  iso_checksum_type = "sha256"
   floppy_files      = ["Autounattend.xml"]
   communicator      = "winrm"
   winrm_username    = "Administrator"
