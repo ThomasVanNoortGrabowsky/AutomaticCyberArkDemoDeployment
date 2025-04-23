@@ -100,7 +100,7 @@ variable "iso_path" { default = "$hclPath" }
 source "vmware-iso" "vault_base" {
   vm_name           = "vault-base"
   iso_url           = "file:///$hclPath"
-  checksums         = ["sha256:$hash"]
+  iso_checksum      = "$hash"
   floppy_files      = ["Autounattend.xml"]
   communicator      = "winrm"
   winrm_username    = "Administrator"
@@ -116,7 +116,7 @@ build { sources = ["source.vmware-iso.vault_base"] }
 $pkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding ASCII
 Write-Host '-> Packer template written.' -ForegroundColor Green
 
-#--- 6) Run Packer build) Run Packer build
+#--- 6) Run Packer build) Run Packer build) Run Packer build
 Write-Host '-> Running Packer init & build...' -ForegroundColor Cyan
 $initOut = & $packerExe init template.pkr.hcl 2>&1; if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed:`n$initOut"; exit 1 }
 $buildOut = & $packerExe build -force template.pkr.hcl 2>&1; if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed:`n$buildOut"; exit 1 }
