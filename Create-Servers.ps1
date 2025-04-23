@@ -3,31 +3,33 @@
   Build a golden Windows Server VM via Packer (unattended via Autounattend.xml) and then clone it via Terraform.
 
 .DESCRIPTION
-  1. Prompts for ISO path, Vault inclusion, deploy path, and domain details.
+  1. Prompts for default ISO path, actual ISO path, vmrest credentials, Vault inclusion, deploy path, and domain details.
   2. Generates Autounattend.xml dynamically with domain join.
   3. Ensures Packer and Terraform are installed.
   4. Builds a golden VM via Packer (vmware-iso).
   5. Retrieves the golden VM ID from the Workstation REST API.
-  6. Generates a Terraform project (main.tf, variables.tf) using here-strings, then runs init, plan, apply.
+  6. Generates a Terraform project (main.tf, variables.tf) using here-strings and array-based writing, then runs init, plan, apply.
 #>
 
-#region ← Defaults and credentials
-$IsoPathDefault = 'C:\Users\ThomasvanNoort\Downloads\SERVER_EVAL_x64FRE_en-us.iso'
-$VmrestUser     = 'vmrest'
-$VmrestPassword = 'Cyberark1'
+#region ← Prompt for default ISO and credentials
+# Ask for default ISO path
+$IsoPathDefault = Read-Host 'Enter the default Windows Server ISO path (e.g. C:\\ISOs\\SERVER_EVAL.iso)'
+# Ask for vmrest API credentials
+$VmrestUser     = Read-Host 'Enter VMware Workstation REST API username'
+$VmrestPassword = Read-Host 'Enter VMware Workstation REST API password'
 #endregion
 
-#--- Prompts
-$IsoPath      = Read-Host "Enter ISO path (or Enter for default [$IsoPathDefault])"
+#--- Prompts for specific run
+$IsoPath      = Read-Host "Enter actual ISO path (or press Enter to use default [$IsoPathDefault])"
 if ([string]::IsNullOrEmpty($IsoPath)) { $IsoPath = $IsoPathDefault }
-$InstallVault = (Read-Host 'Install Vault server? (Y/N)').Trim().ToUpper() -eq 'Y'
-$DeployPath   = Read-Host 'Base folder path for VMs (e.g. C:\VMs)'
-$DomainName   = Read-Host 'Domain to join (e.g. corp.local)'
-$DomainUser   = Read-Host 'Domain join user (e.g. joinuser)'
+$InstallVault = (Read-Host 'Install Vault server? (Y/N)') -match '^[Yy]$'
+$DeployPath   = Read-Host 'Enter base folder path for VMs (e.g. C:\\VMs)'
+$DomainName   = Read-Host 'Enter domain to join (e.g. corp.local)'
+$DomainUser   = Read-Host 'Enter domain join user (e.g. joinuser)'
 $DomainPass   = 'Cyberark1'
 
-#--- 1) Autounattend.xml
-$UnattendXml = @"
+#--- 1) Generate Autounattend.xml
+$unattend = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
   <settings pass="windowsPE">
@@ -55,32 +57,32 @@ $UnattendXml = @"
   </settings>
 </unattend>
 "@
-$UnattendXml | Set-Content -Path (Join-Path $PSScriptRoot 'Autounattend.xml') -Encoding UTF8
-Write-Host 'Autounattend.xml created.'
+$unattend | Set-Content -Path (Join-Path $PSScriptRoot 'Autounattend.xml') -Encoding UTF8
+Write-Host 'Generated Autounattend.xml.' -ForegroundColor Green
 
-#--- 2) Install Packer and Terraform if missing
-function Install-Tool($name,$wingetId){
-  if (-not (Get-Command $name -ErrorAction SilentlyContinue)){
-    Write-Host "Installing $name..." -ForegroundColor Yellow
-    Start-Process winget -ArgumentList 'install','--id',$wingetId,'-e','--accept-package-agreements','--accept-source-agreements' -NoNewWindow -Wait
+#--- 2) Ensure Packer and Terraform are installed
+function Ensure-Tool($name, $id) {
+  if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
+    Write-Host "Installing $name via winget..." -ForegroundColor Yellow
+    Start-Process winget -ArgumentList 'install','--id',$id,'-e','--accept-package-agreements','--accept-source-agreements' -NoNewWindow -Wait
     $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
-    Write-Host "$name installed."
+    Write-Host "$name installed." -ForegroundColor Green
   }
 }
-Install-Tool packer 'HashiCorp.Packer'
-Install-Tool terraform 'HashiCorp.Terraform'
+Ensure-Tool packer 'HashiCorp.Packer'
+Ensure-Tool terraform 'HashiCorp.Terraform'
 
 #--- 3) Compute ISO checksum
-Write-Host 'Calculating ISO checksum...'
+Write-Host 'Calculating ISO checksum...' -ForegroundColor Cyan
 $IsoHash = (Get-FileHash -Path $IsoPath -Algorithm SHA256).Hash
 
 #--- 4) Write Packer template
-$HclIso = $IsoPath -replace '\\','/' 
+$HclPath = $IsoPath -replace '\\','/'  
 $PkrTemplate = @"
-variable "iso_path" { default="$HclIso" }
+variable "iso_path" { default = "$HclPath" }
 source "vmware-iso" "vault_base" {
   vm_name           = "vault-base"
-  iso_url           = "file:///$HclIso"
+  iso_url           = "file:///$HclPath"
   iso_checksum_type = "sha256"
   iso_checksum      = "$IsoHash"
   floppy_files      = ["Autounattend.xml"]
@@ -95,79 +97,75 @@ source "vmware-iso" "vault_base" {
 build { sources = ["source.vmware-iso.vault_base"] }
 "@
 $PkrTemplate | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
-Write-Host 'Packer HCL template written.'
+Write-Host 'Packer HCL template written.' -ForegroundColor Green
 
-#--- 5) Build image via Packer
-Write-Host 'Building golden VM...'
-& packer init template.pkr.hcl | Out-Null; & packer build -force template.pkr.hcl
+#--- 5) Build golden VM image
+Write-Host 'Running Packer build...' -ForegroundColor Cyan
+& packer init template.pkr.hcl | Out-Null
+& packer build -force template.pkr.hcl | Out-Null
 
-#--- 6) Retrieve VM ID
+#--- 6) Retrieve golden VM ID
 $Cred = New-Object System.Management.Automation.PSCredential($VmrestUser,(ConvertTo-SecureString $VmrestPassword -AsPlainText -Force))
 Start-Sleep -Seconds 5
 $VMs = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Credential $Cred
 $BaseId = ($VMs | Where-Object name -eq 'vault-base').id
-Write-Host "Golden VM ID: $BaseId"
+Write-Host "Golden VM ID: $BaseId" -ForegroundColor Green
 
-#--- 7) Generate Terraform config and deploy
-$TerraformMain = @'
-terraform {
-  required_providers {
-    vmworkstation = {
-      source  = "elsudano/vmworkstation"
-      version = ">=1.0.4"
-    }
-  }
-}
+#--- 7) Generate Terraform config
+$tfDir = Join-Path $PSScriptRoot 'terraform'
+if (-not (Test-Path $tfDir)) { New-Item -Path $tfDir -ItemType Directory | Out-Null }
 
-provider "vmworkstation" {
-  user     = var.vmrest_user
-  password = var.vmrest_password
-  url      = "http://127.0.0.1:8697/api"
-}
-'@
-
+$main = @(
+ 'terraform {',
+ '  required_providers {',
+ '    vmworkstation = { source = "elsudano/vmworkstation" version = ">=1.0.4" }',
+ '  }',
+ '}',
+ '',
+ 'provider "vmworkstation" {',
+ '  user     = var.vmrest_user',
+ '  password = var.vmrest_password',
+ '  url      = "http://127.0.0.1:8697/api"',
+ '}',
+ ''
+)
 if ($InstallVault) {
-$TerraformMain += @"
-resource "vmworkstation_vm" "vault" {
-  sourceid     = "$BaseId"
-  denomination = "CyberArk-Vault"
-  processors   = 8
-  memory       = 32768
-  path         = "$DeployPath/CyberArk-Vault"
+  $main += @(  
+    'resource "vmworkstation_vm" "vault" {',
+    "  sourceid     = \"$BaseId\"",
+    '  denomination = "CyberArk-Vault"',
+    '  processors   = 8',
+    '  memory       = 32768',
+    "  path         = \"$DeployPath\CyberArk-Vault\"",
+    '}',
+    ''
+  )
 }
-"@
-}
-
 foreach ($Comp in @('PVWA','CPM','PSM')) {
-$TerraformMain += @"
-resource "vmworkstation_vm" "$($Comp.ToLower())" {
-  sourceid     = "$BaseId"
-  denomination = "CyberArk-$Comp"
-  processors   = 4
-  memory       = 8192
-  path         = "$DeployPath/CyberArk-$Comp"
+  $main += @(  
+    "resource \"vmworkstation_vm\" \"$($Comp.ToLower())\" {",
+    "  sourceid     = \"$BaseId\"",
+    "  denomination = \"CyberArk-$Comp\"",
+    '  processors   = 4',
+    '  memory       = 8192',
+    "  path         = \"$DeployPath\CyberArk-$Comp\"",
+    '}',
+    ''
+  )
 }
-"@
-}
+$main | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
 
-($TerraformMain) | Set-Content -Path (Join-Path $PSScriptRoot 'terraform/main.tf') -Encoding UTF8
+$vars = @(
+ "variable \"vmrest_user\" { type = string default = \"$VmrestUser\" }",
+ "variable \"vmrest_password\" { type = string default = \"$VmrestPassword\" }"
+)
+$vars | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
 
-$TerraformVars = @'
-variable "vmrest_user" {
-  type    = string
-  default = "'$VmrestUser'"
-}
-variable "vmrest_password" {
-  type    = string
-  default = "'$VmrestPassword'"
-}
-'@
-$TerraformVars | Set-Content -Path (Join-Path $PSScriptRoot 'terraform/variables.tf') -Encoding UTF8
-
-Push-Location (Join-Path $PSScriptRoot 'terraform')
+#--- 8) Deploy via Terraform
+Push-Location $tfDir
 terraform init -upgrade | Out-Null
 terraform plan -out=tfplan
 terraform apply -auto-approve tfplan
 Pop-Location
 
-Write-Host 'All done! Your VMs are deployed.' -ForegroundColor Green
+Write-Host 'All done! Your VMs have been deployed.' -ForegroundColor Green
