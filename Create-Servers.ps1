@@ -1,15 +1,15 @@
 <#
   Create-Servers.ps1
   -------------------
-  Automated CyberArk lab deployment:
-    1) Unattended Windows Server ISO → Packer golden image
+  Automated CyberArk lab:
+    1) Unattended Windows 11 ISO → Packer golden image
     2) vmrest-backed Terraform clones of Vault (optional) + PVWA/CPM/PSM
 #>
 
 $ErrorActionPreference = 'Stop'
 
 ### 0) Elevate to Administrator ###
-if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
     ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Start-Process pwsh "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
     exit
@@ -31,8 +31,8 @@ if (-not (Test-Path $packerExe)) {
     Write-Host "-> Packer installed at $installDir" -ForegroundColor Green
 }
 
-### 2) Prompt for inputs ###
-$IsoPath        = Read-Host "1) Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)"
+### 2) Prompt for user inputs ###
+$IsoPath        = Read-Host "1) Windows 11 ISO path (e.g. C:\ISOs\Win11_21H2.iso)"
 if (-not (Test-Path $IsoPath -PathType Leaf)) {
     Write-Error "ISO not found at '$IsoPath'"; exit 1
 }
@@ -46,20 +46,21 @@ $DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
 $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
-### 3) Generate a valid Autounattend.xml ###
+### 3) Generate corrected Autounattend.xml for Windows 11 ###
 $xmlTemplate = @'
 <?xml version="1.0" encoding="utf-8"?>
-<unattend xmlns="urn:schemas-microsoft-com:unattend">
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
 
-  <!-- windowsPE PASS: locale, image selection, auto partition -->
+  <!-- windowsPE PASS: locale, image selection, autopartition -->
   <settings pass="windowsPE">
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
+               versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
       <InputLocale>en-US</InputLocale>
       <SystemLocale>en-US</SystemLocale>
       <UILanguage>en-US</UILanguage>
@@ -75,7 +76,7 @@ $xmlTemplate = @'
           <InstallFrom>
             <MetaData wcm:action="add">
               <Key>/IMAGE/NAME</Key>
-              <Value>Windows Server 2022 SERVERSTANDARDCORE</Value>
+              <Value>Windows 11 Pro</Value>
             </MetaData>
           </InstallFrom>
           <InstallToAvailablePartition>true</InstallToAvailablePartition>
@@ -88,7 +89,7 @@ $xmlTemplate = @'
     </component>
   </settings>
 
-  <!-- specialize PASS: domain join -->
+  <!-- specialize PASS: join domain -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-UnattendedJoin"
                processorArchitecture="amd64"
@@ -130,6 +131,7 @@ $xmlTemplate = @'
           <PlainText>true</PlainText>
         </Password>
         <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
       </AutoLogon>
       <OOBE>
         <HideEULAPage>true</HideEULAPage>
@@ -204,7 +206,7 @@ if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed"; exit 1 }
 & $packerExe build  -force "$PSScriptRoot\template.pkr.hcl" 2>&1 | Write-Host
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed"; exit 1 }
 
-### 7) Restart vmrest + retrieve golden VM ID ###
+### 7) Restart vmrest + fetch golden VM ID ###
 Stop-Process -Name vmrest -Force -ErrorAction SilentlyContinue
 Start-Process "$wsDir\vmrest.exe" -ArgumentList "-b" -WindowStyle Hidden
 Start-Sleep 5
