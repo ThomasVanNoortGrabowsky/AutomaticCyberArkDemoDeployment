@@ -112,11 +112,11 @@ source "vmware-iso" "vault_base" {
 }
 build { sources = ["source.vmware-iso.vault_base"] }
 "@
-# write without BOM to avoid invalid characters
-$pkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8NoBOM
-Write-Host '-> Packer template written.' -ForegroundColor Green
+# write template as UTF8
+$pkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
+Write-Host '-> Packer template written.' -ForegroundColor Green -ForegroundColor Green
 
-#--- 6) Run Packer build) Run Packer build) Run Packer build
+#--- 6) Run Packer build
 Write-Host '-> Running Packer init & build...' -ForegroundColor Cyan
 $initOut = & $packerExe init template.pkr.hcl 2>&1
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed:`n$initOut"; exit 1 }
