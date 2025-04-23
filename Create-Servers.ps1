@@ -1,16 +1,16 @@
 # Create-Servers.ps1
-# CyberArk lab: Unattended ISO → Packer golden image → Terraform clones
+# Automated CyberArk lab: unattended ISO → Packer golden image → Terraform clones
 
 $ErrorActionPreference = 'Stop'
 
-# -- 0) Elevate to Admin --
+# 0) Elevate if not already Administrator
 if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
     ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   Start-Process pwsh "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
   exit
 }
 
-# -- 1) Download Packer Locally --
+# 1) Ensure Packer is available locally
 $packerVersion = "1.11.4"
 $installDir    = Join-Path $PSScriptRoot "packer-bin"
 $packerExe     = Join-Path $installDir "packer.exe"
@@ -26,7 +26,7 @@ if (-not (Test-Path $packerExe)) {
   Write-Host "-> Packer installed at $installDir" -ForegroundColor Green
 }
 
-# -- 2) Prompt for Inputs --
+# 2) Prompt the user for all required inputs
 $IsoPath        = Read-Host "1) Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)"
 $VmrestUser     = Read-Host "2) vmrest API username"
 $VmrestSecure   = Read-Host "3) vmrest API password" -AsSecureString
@@ -38,12 +38,21 @@ $DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
 $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
-# -- 3) Write Autounattend.xml for Unattended + Domain-Join --
+# 3) Generate the corrected Autounattend.xml
 $autoXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
-  <!-- windowsPE pass: disk partitioning + image install -->
+
+  <!-- windowsPE pass: language/keyboard + disk setup -->
   <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
     <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" versionScope="nonSxS">
       <DiskConfiguration>
         <WillShowUI>OnError</WillShowUI>
@@ -51,29 +60,19 @@ $autoXml = @"
           <DiskID>0</DiskID>
           <WillWipeDisk>true</WillWipeDisk>
           <CreatePartitions>
-            <CreatePartition wcm:action="add">
-              <Order>1</Order><Type>Primary</Type><Size>16384</Size>
-            </CreatePartition>
-            <CreatePartition wcm:action="add">
-              <Order>2</Order><Type>Primary</Type><Extend>true</Extend>
-            </CreatePartition>
+            <CreatePartition wcm:action="add"><Order>1</Order><Type>Primary</Type><Size>16384</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>2</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
           </CreatePartitions>
           <ModifyPartitions>
-            <ModifyPartition wcm:action="add">
-              <Order>1</Order><PartitionID>1</PartitionID>
-              <Format>NTFS</Format><Label>System</Label><Active>true</Active>
-            </ModifyPartition>
-            <ModifyPartition wcm:action="add">
-              <Order>2</Order><PartitionID>2</PartitionID>
-              <Format>NTFS</Format><Label>Windows</Label>
-            </ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>NTFS</Format><Label>System</Label><Active>true</Active></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID><Format>NTFS</Format><Label>Windows</Label></ModifyPartition>
           </ModifyPartitions>
         </Disk>
       </DiskConfiguration>
       <ImageInstall>
         <OSImage>
           <InstallFrom>
-            <MetaData wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+            <MetaData wcm:action="add">
               <Key>/IMAGE/NAME</Key>
               <Value>Windows Server 2022 SERVERSTANDARDCORE</Value>
             </MetaData>
@@ -102,7 +101,7 @@ $autoXml = @"
     </component>
   </settings>
 
-  <!-- oobeSystem pass: locale, auto-logon, hide EULA -->
+  <!-- oobeSystem pass: locale + autologon + hide EULA -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" versionScope="nonSxS">
       <InputLocale>en-US</InputLocale>
@@ -113,10 +112,7 @@ $autoXml = @"
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" versionScope="nonSxS">
       <AutoLogon>
         <Username>Administrator</Username>
-        <Password>
-          <Value>Cyberark1</Value>
-          <PlainText>true</PlainText>
-        </Password>
+        <Password><Value>Cyberark1</Value><PlainText>true</PlainText></Password>
         <Enabled>true</Enabled>
       </AutoLogon>
       <OOBE>
@@ -128,21 +124,19 @@ $autoXml = @"
       <RegisteredOrganization>CyberArk</RegisteredOrganization>
     </component>
   </settings>
+
 </unattend>
 "@
-
-# Write out the fixed file
 $autoXml | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
-Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
+Write-Host "-> Corrected Autounattend.xml generated." -ForegroundColor Green
 
-# 4) Write minimal netmap.conf to both locations
-$wsDir          = 'C:\Program Files (x86)\VMware\VMware Workstation'
-$programDataDir = Join-Path $env:ProgramData 'VMware'
-$pathsToFill    = @(
-    Join-Path -Path $wsDir          -ChildPath 'netmap.conf'
-    Join-Path -Path $programDataDir -ChildPath 'netmap.conf'
+# 4) Write minimal netmap.conf to both ProgramData and Program Files locations
+$wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
+$programData = Join-Path $env:ProgramData 'VMware'
+$pathsToFill = @(
+  Join-Path -Path $wsDir       -ChildPath 'netmap.conf'
+  Join-Path -Path $programData -ChildPath 'netmap.conf'
 )
-
 $netmapContent = @"
 # Minimal netmap.conf for Packer
 network0.name   = "Bridged"
@@ -152,22 +146,21 @@ network1.device = "vmnet1"
 network8.name   = "NAT"
 network8.device = "vmnet8"
 "@
-
 foreach ($p in $pathsToFill) {
-    $dir = Split-Path $p -Parent
-    if (-not (Test-Path $dir)) { New-Item -Path $dir -ItemType Directory -Force | Out-Null }
-    $netmapContent | Set-Content -Path $p -Encoding ASCII
-    Write-Host "• Wrote netmap.conf to $p"
+  $dir = Split-Path $p -Parent
+  if (-not (Test-Path $dir)) { New-Item -Path $dir -ItemType Directory -Force | Out-Null }
+  $netmapContent | Set-Content -Path $p -Encoding ASCII
+  Write-Host "-> Wrote fallback netmap.conf to $p" -ForegroundColor Green
 }
 
-# -- 5) Generate Packer HCL Template (force NAT network) --
+# 5) Build Packer HCL template with explicit NAT network
 $hclIso   = $IsoPath.Replace('\','/')
 $checksum = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
-$hcl      = @"
+$packerHcl = @"
 source "vmware-iso" "vault_base" {
   iso_url           = "file:///$hclIso"
   iso_checksum      = "sha256:$checksum"
-  network           = "nat"                         # ← Force NAT, skip any lookup errors :contentReference[oaicite:3]{index=3}
+  network           = "nat"
   communicator      = "winrm"
   winrm_username    = "Administrator"
   winrm_password    = "Cyberark1"
@@ -179,18 +172,18 @@ source "vmware-iso" "vault_base" {
 }
 build { sources = ["source.vmware-iso.vault_base"] }
 "@
-Set-Content "$PSScriptRoot\template.pkr.hcl" $hcl -Encoding ASCII
+Set-Content "$PSScriptRoot\template.pkr.hcl" $packerHcl -Encoding ASCII
 Write-Host "-> Packer template written." -ForegroundColor Green
 
-# -- 6) Run Packer init & build --
+# 6) Run Packer
 Write-Host "-> Running Packer init & build…" -ForegroundColor Cyan
 & $packerExe init "$PSScriptRoot\template.pkr.hcl" | Write-Host
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed"; exit 1 }
 & $packerExe build -force "$PSScriptRoot\template.pkr.hcl" | Write-Host
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed"; exit 1 }
 
-# -- 7) Restart vmrest & fetch Golden VM ID via Basic Auth --
-Stop-Process -Name vmrest -Force -ErrorAction SilentlyContinue
+# 7) Restart vmrest + fetch golden VM ID
+Stop-Process -Name vmrest -ErrorAction SilentlyContinue -Force
 Start-Process "$wsDir\vmrest.exe" -ArgumentList "-b" -WindowStyle Hidden
 Start-Sleep 5
 $url     = 'http://127.0.0.1:8697/api/vms'
@@ -205,12 +198,11 @@ try {
 $BaseId = ($VMs | Where-Object name -eq 'vault_base').id
 Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
 
-# -- 8) Generate &  Apply Terraform Project --
+# 8) Generate & apply Terraform configs
 $tfDir = Join-Path $PSScriptRoot 'terraform'
 if (Test-Path $tfDir) { Remove-Item $tfDir -Recurse -Force }
 New-Item $tfDir -ItemType Directory | Out-Null
 
-# main.tf
 $main = @"
 terraform {
   required_providers {
@@ -249,14 +241,12 @@ resource "vmworkstation_vm" "$lower" {
 }
 Set-Content (Join-Path $tfDir 'main.tf') $main -Encoding ASCII
 
-# variables.tf
 $vars = @"
 variable "vmrest_user"    { default = "$VmrestUser" }
 variable "vmrest_password"{ default = "$VmrestPassword" }
 "@
 Set-Content (Join-Path $tfDir 'variables.tf') $vars -Encoding ASCII
 
-# Deploy
 Push-Location $tfDir
 terraform init -upgrade | Write-Host
 terraform plan -out=tfplan | Write-Host
