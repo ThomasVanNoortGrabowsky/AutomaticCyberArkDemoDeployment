@@ -19,7 +19,8 @@ function Test-IsAdmin {
 }
 if (-not (Test-IsAdmin)) {
   Write-Host 'Script needs Administrator rights to manage vmrest. Relaunching as admin...' -ForegroundColor Yellow
-  Start-Process -FilePath pwsh -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$PSCommandPath`"" -Verb RunAs
+  # Relaunch using powershell.exe for broad compatibility
+  Start-Process -FilePath 'powershell.exe' -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
   exit
 }
 
