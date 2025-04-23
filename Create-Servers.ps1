@@ -38,7 +38,7 @@ $DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
 $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
-# 3) Generate the corrected Autounattend.xml
+# 3) Generate the Autounattend.xml
 $autoXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
@@ -128,7 +128,7 @@ $autoXml = @"
 </unattend>
 "@
 $autoXml | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
-Write-Host "-> Corrected Autounattend.xml generated." -ForegroundColor Green
+Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
 # 4) Write minimal netmap.conf to both ProgramData and Program Files locations
 $wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
