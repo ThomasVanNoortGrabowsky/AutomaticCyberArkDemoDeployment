@@ -1,199 +1,170 @@
 <#
 .SYNOPSIS
-  Build a golden Windows Server VM via Packer, then clone it via Terraform.
+  Build a golden Windows Server VM via Packer, with unattended install via Autounattend.xml (including domain join), then clone via Terraform.
 
 .DESCRIPTION
-  1. Packer runs a vmware-iso build using your ISO to produce a "vault-base" VM.
-     - You MUST have a matching Autounattend.xml in the script folder.
-  2. The script polls the Workstation REST API to get the new VM's ID.
-  3. It writes out a Terraform project that clones:
-     • (Optional) CyberArk-Vault (8 cores, 32 GB RAM, 2×80 GB)
-     • PVWA, CPM, PSM (4 cores, 8 GB RAM, 2×80 GB each)
-  4. Finally, it does `terraform init`, `terraform plan`, and `terraform apply -auto-approve`.
+  1. Prompts for ISO path, Vault inclusion, deploy path, domain information.
+  2. Generates Autounattend.xml for unattended Windows install (using Cyberark1 password).
+  3. Downloads/installs Packer & Terraform if missing.
+  4. Builds golden VM via Packer (vmware-iso).
+  5. Retrieves golden VM ID from Workstation REST API.
+  6. Generates Terraform config and deploys VMs (Vault optional + PVWA, CPM, PSM).
 
 .PARAMETER IsoPath
-  Path to your Windows Server ISO. Edit below or respond at prompt.
+  Path to your Windows Server ISO. Default set below but can be edited.
 #>
 
-#region ← User settings — edit these or respond at prompts
-# Path to your Windows ISO:
+#region ← User settings — edit if desired or respond at prompts
+# Default path to Windows ISO (can override at prompt)
 $IsoPath = 'C:\Users\ThomasvanNoort\Downloads\SERVER_EVAL_x64FRE_en-us.iso'
 
-# Credentials you set up via `vmrest.exe --config`
+# Workstation REST API credentials
 $VmrestUser     = 'vmrest'
 $VmrestPassword = 'Cyberark1'
 
-# Ask whether to install Vault server infrastructure:
-$installVault = Read-Host 'Do you want the Vault server infrastructure to be installed too? (Y/N)'
-$InstallVault = $installVault -match '^[Yy]'
+# Prompt whether to install Vault server
+$installVault   = Read-Host 'Install Vault server infrastructure too? (Y/N)'
+$InstallVault   = $installVault -match '^[Yy]'
 
-# Dynamically ask where to deploy VMs:
-$DeployPath = Read-Host 'Enter the base folder path where VMs should be deployed (e.g. C:\VMs)'
+# Prompt deploy folder path
+$DeployPath     = Read-Host 'Enter base folder path to deploy VMs (e.g. C:\VMs)'
+
+# Prompt domain join info
+$DomainName      = Read-Host 'Enter domain to join (e.g. corp.local)'
+$DomainJoinUser  = Read-Host 'Enter domain join user (e.g. joinuser)'
+$DomainJoinPass  = 'Cyberark1'   # fixed password for domain join and local Admin
 #endregion
 
-#--- 1) prerequisites
-# Ensure Packer is installed (download if needed)
+#--- 1) Generate Autounattend.xml for unattended Windows install
+$unattendFile = Join-Path $PSScriptRoot 'Autounattend.xml'
+
+$unattendXml = @"
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>Administrator</FullName>
+        <Organization>MyOrg</Organization>
+      </UserData>
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>Windows Server 2019 Datacenter</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>1</PartitionID>
+          </InstallTo>
+        </OSImage>
+      </ImageInstall>
+    </component>
+  </settings>
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-UnattendedJoin" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <Identification>
+        <Credentials>
+          <Domain>$DomainName</Domain>
+          <Username>$DomainJoinUser</Username>
+          <Password>$DomainJoinPass</Password>
+        </Credentials>
+      </Identification>
+      <JoinDomain>$DomainName</JoinDomain>
+    </component>
+  </settings>
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <AutoLogon>
+        <Username>Administrator</Username>
+        <Password>
+          <Value>$DomainJoinPass</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <Enabled>false</Enabled>
+      </AutoLogon>
+      <RegisteredOrganization>MyOrg</RegisteredOrganization>
+      <RegisteredOwner>Administrator</RegisteredOwner>
+      <TimeZone>W. Europe Standard Time</TimeZone>
+    </component>
+  </settings>
+</unattend>
+"@
+
+$unattendXml | Set-Content -Path $unattendFile -Encoding UTF8
+Write-Host "Generated Autounattend.xml at $unattendFile"
+
+#--- 2) Ensure Packer and Terraform installed
 if (-not (Get-Command packer -ErrorAction SilentlyContinue)) {
-    Write-Host "Packer not found. Downloading Packer..." -ForegroundColor Yellow
-    $packerVersion = '1.8.6'                # adjust as needed
-    $zipPath       = "$env:TEMP\packer_$packerVersion.zip"
-    $downloadUrl   = "https://releases.hashicorp.com/packer/$packerVersion/packer_${packerVersion}_windows_amd64.zip"
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath
-    $packerDir = Join-Path $PSScriptRoot 'packer-bin'
-    if (-not (Test-Path $packerDir)) { New-Item -ItemType Directory -Path $packerDir | Out-Null }
-    Expand-Archive -Path $zipPath -DestinationPath $packerDir -Force
-    Remove-Item $zipPath
-    # Add to PATH for this session
-    $env:PATH = "$packerDir;$env:PATH"
-    Write-Host "Packer downloaded to $packerDir and added to PATH." -ForegroundColor Green
+  Write-Host "Downloading Packer..." -ForegroundColor Yellow
+  $ver = '1.8.6'; $zip = "$env:TEMP\packer_$ver.zip"; $url = "https://releases.hashicorp.com/packer/$ver/packer_${ver}_windows_amd64.zip"
+  Invoke-WebRequest $url -OutFile $zip
+  $pd = Join-Path $PSScriptRoot 'packer-bin'; if(-not(Test-Path $pd)){New-Item -ItemType Dir -Path $pd}
+  Expand-Archive $zip -DestinationPath $pd -Force; Remove-Item $zip
+  $env:PATH = "$pd;$env:PATH"; Write-Host "Packer ready."
 }
-
-# Ensure Terraform is installed (via winget)
 if (-not (Get-Command terraform -ErrorAction SilentlyContinue)) {
-    Write-Host "Terraform not found. Installing via winget..." -ForegroundColor Yellow
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Start-Process winget -ArgumentList @(
-            'install','--id','HashiCorp.Terraform','-e','--source','winget',
-            '--accept-package-agreements','--accept-source-agreements'
-        ) -NoNewWindow -Wait
-        # Refresh PATH
-        $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
-    } else {
-        Write-Error "winget not available to install Terraform; please install Terraform manually."
-        exit 1
-    }
+  Write-Host "Installing Terraform..." -ForegroundColor Yellow
+  Start-Process winget -ArgumentList 'install','--id','HashiCorp.Terraform','-e','--source','winget',
+    '--accept-package-agreements','--accept-source-agreements' -NoNewWindow -Wait
+  $env:PATH = [Environment]::GetEnvVariable('PATH','Machine') + ";" + [Environment]::GetEnvVariable('PATH','User')
+  Write-Host "Terraform ready."
 }
 
-#--- 2) Write out Packer HCL template
-# Convert Windows path to forward slashes for HCL
-$hclIsoPath = $IsoPath -replace '\\','/'  
+#--- 3) Compute ISO checksum
+Write-Host "Calculating ISO checksum..."
+$isoHash = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
+
+#--- 4) Write Packer HCL
+$hclIso = $IsoPath -replace '\\','/'  
 $packerHcl = @"
-variable "iso_path" {
-  type    = string
-  default = "$hclIsoPath"
-}
-
+variable "iso_path" { type=string default="$hclIso" }
 source "vmware-iso" "vault_base" {
-  vm_name           = "cyberark-vault-base"
-  iso_url           = "file:///$hclIsoPath"
-  floppy_files      = ["Autounattend.xml"]
-  communicator      = "winrm"
-  winrm_username    = "Administrator"
-  winrm_password    = "P@ssw0rd!"
-
-  disk_size         = 81920
-  cpus              = 8
-  memory            = 32768
-
-  shutdown_command  = "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\""
+  vm_name         = "vault-base"; iso_url="file:///$hclIso"; iso_checksum_type="sha256"; iso_checksum="$isoHash"
+  floppy_files    = ["Autounattend.xml"]; communicator="winrm"; winrm_username="Administrator"; winrm_password="\$DomainJoinPass"
+  disk_size=81920; cpus=8; memory=32768
+  shutdown_command="shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\""
 }
-build {
-  sources = ["source.vmware-iso.vault_base"]
-}
+build { sources=["source.vmware-iso.vault_base"] }
 "@
-$packerFile = Join-Path $PSScriptRoot 'template.pkr.hcl'
-$packerHcl | Set-Content -Path $packerFile -Encoding UTF8
-Write-Host "Wrote Packer template to $packerFile"
+$packerHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
+Write-Host "Wrote Packer template"
 
-#--- 3) Kick off Packer build
-Write-Host "`n=== Starting Packer build…"
-& packer init $packerFile
-& packer build -force $packerFile
-if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed"; exit 1 }
+#--- 5) Build VM image
+& packer init template.pkr.hcl; & packer build -force template.pkr.hcl
 
-#--- 4) Query Workstation REST API for the new VM ID
-Write-Host "`n=== Fetching base VM ID from vmrest…"
-$securePass = ConvertTo-SecureString $VmrestPassword -AsPlainText -Force
-$creds      = New-Object System.Management.Automation.PSCredential($VmrestUser, $securePass)
-Start-Sleep -Seconds 5   # give REST API time to register VM
-$vms = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Credential $creds -Method Get
-$baseVm = $vms | Where-Object name -eq 'cyberark-vault-base'
-if (-not $baseVm) {
-  Write-Error "Could not find 'cyberark-vault-base' in API results"
-  exit 1
-}
-$baseId = $baseVm.id
-Write-Host "Found base VM ID: $baseId"
+#--- 6) Get VM ID
+$creds = New-Object System.Management.Automation.PSCredential($VmrestUser,(ConvertTo-SecureString $VmrestPassword -AsPlainText -Force))
+Start-Sleep 5
+$vms=Invoke-RestMethod 'http://127.0.0.1:8697/api/vms' -Credential $creds
+$baseId=($vms|Where name -eq 'vault-base').id; Write-Host "Base VM ID: $baseId"
 
-#--- 5) Generate Terraform project
-$tfDir = Join-Path $PSScriptRoot 'terraform'
-if (Test-Path $tfDir) { Remove-Item $tfDir -Recurse -Force }
-New-Item -ItemType Directory -Path $tfDir | Out-Null
-
-# Build main.tf content using a here-string
-$tfMain = @"
-terraform {
-  required_providers {
-    vmworkstation = {
-      source  = "elsudano/vmworkstation"
-      version = ">= 1.0.4"
-    }
-  }
-}
-
-provider "vmworkstation" {
-  user     = var.vmrest_user
-  password = var.vmrest_password
-  url      = "http://127.0.0.1:8697/api"
-}
+#--- 7) Generate Terraform and deploy
+$tf= @"
+terraform { required_providers { vmworkstation={source="elsudano/vmworkstation" version=">=1.0.4"}}}
+provider "vmworkstation" {user=var.vmrest_user password=var.vmrest_password url="http://127.0.0.1:8697/api"}
+"@ +
+($InstallVault? @"
+resource "vmworkstation_vm" "vault" { sourceid="$baseId" denomination="CyberArk-Vault" processors=8 memory=32768 path="$DeployPath/CyberArk-Vault" }
+"@ : "") +
+"""
+# Add PVWA,CPM,PSM
+@"
+resource "vmworkstation_vm" "pvwa" { sourceid="$baseId" denomination="CyberArk-PVWA" processors=4 memory=8192 path="$DeployPath/CyberArk-PVWA" }
+resource "vmworkstation_vm" "cpm"  { sourceid="$baseId" denomination="CyberArk-CPM"  processors=4 memory=8192 path="$DeployPath/CyberArk-CPM"  }
+resource "vmworkstation_vm" "psm"  { sourceid="$baseId" denomination="CyberArk-PSM"  processors=4 memory=8192 path="$DeployPath/CyberArk-PSM"  }
 "@
+$tf | Set-Content -Path (Join-Path $PSScriptRoot 'terraform/main.tf') -Encoding UTF8
+@"
+variable "vmrest_user" { default="$VmrestUser"}
+variable "vmrest_password" { default="$VmrestPassword"}
+"@ | Set-Content -Path (Join-Path $PSScriptRoot 'terraform/variables.tf') -Encoding UTF8
 
-# Optionally include Vault server
-if ($InstallVault) {
-  $tfMain += @"
-resource "vmworkstation_vm" "vault" {
-  sourceid     = "${baseId}"
-  denomination = "CyberArk-Vault"
-  description  = "Vault server (8 CPU, 32 GB RAM, 2×80 GB)"
-  processors   = 8
-  memory       = 32768
-  path         = "${DeployPath}/CyberArk-Vault"
-}
-"@
-}
-
-# Always include PVWA, CPM, PSM
-$components = @("PVWA","CPM","PSM")
-foreach ($comp in $components) {
-  $tfMain += @"
-resource "vmworkstation_vm" "${comp.ToLower()}" {
-  sourceid     = "${baseId}"
-  denomination = "CyberArk-${comp}"
-  description  = "${comp} server (4 CPU, 8 GB RAM, 2×80 GB)"
-  processors   = 4
-  memory       = 8192
-  path         = "${DeployPath}/CyberArk-${comp}"
-}
-"@
-}
-
-# Write Terraform files
-$tfMain | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
-
-$tfVars = @"
-variable "vmrest_user" {
-  type    = string
-  default = "${VmrestUser}"
-}
-variable "vmrest_password" {
-  type    = string
-  default = "${VmrestPassword}"
-}
-"@
-$tfVars | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
-
-Write-Host "Wrote Terraform config into $tfDir"
-
-#--- 6) Run Terraform: init, plan, apply
-Push-Location $tfDir
-Write-Host "`n=== terraform init"  -ForegroundColor Cyan
-& terraform init -upgrade
-
-Write-Host "`n=== terraform plan"  -ForegroundColor Cyan
-& terraform plan -out=tfplan
-
-Write-Host "`n=== terraform apply" -ForegroundColor Cyan
-& terraform apply -auto-approve tfplan
+Push-Location terraform
+terraform init -upgrade; terraform plan -out=tfplan; terraform apply -auto-approve tfplan
 Pop-Location
 
-Write-Host "`n✅ All done! You should now see your requested VMs in VMware Workstation." -ForegroundColor Green
+Write-Host "All done. VMs deployed." -ForegroundColor Green
