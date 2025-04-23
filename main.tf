@@ -14,7 +14,7 @@ provider "vmworkstation" {
 }
 
 resource "vmworkstation_vm" "test_vm" {
-  sourceid     = var.base_vm_id         # ID of the golden image to clone
+  sourceid     = var.vault_image_id       # uses the Vault golden image ID
   denomination = "TestVM-Terraform"
   description  = "VM created via Terraform"
   processors   = var.vm_processors
