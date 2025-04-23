@@ -7,9 +7,21 @@
   2. Generates Autounattend.xml for unattended Windows install with domain join.
   3. Installs Packer & Terraform via winget if missing.
   4. Builds a golden "vault-base" VM image using Packer.
-  5. Restarts vmrest daemon and retrieves the VM ID via Basic auth.
+  5. Ensures vmrest daemon is running (self‑elevating to Admin if needed) and retrieves the VM ID via Basic auth.
   6. Generates Terraform configs (main.tf, variables.tf) and applies them to clone Vault (optional) plus PVWA/CPM/PSM.
 #>
+
+#--- Self‑elevate to Administrator for vmrest control
+function Test-IsAdmin {
+  $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = New-Object Security.Principal.WindowsPrincipal($current)
+  return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+if (-not (Test-IsAdmin)) {
+  Write-Host 'Script needs Administrator rights to manage vmrest. Relaunching as admin...' -ForegroundColor Yellow
+  Start-Process -FilePath pwsh -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$PSCommandPath`"" -Verb RunAs
+  exit
+}
 
 #--- 1) Prompt for inputs
 $IsoPath        = Read-Host 'Enter Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)'
@@ -71,7 +83,7 @@ foreach ($t in $tools.Keys) {
 Write-Host 'Calculating ISO checksum...' -ForegroundColor Cyan
 $IsoHash = (Get-FileHash -Path $IsoPath -Algorithm SHA256).Hash
 
-#--- 5) Write Packer template
+#--- 5) Write Packer HCL template
 $HclIso = $IsoPath -replace '\\','/'
 $PkrHcl = @"
 variable "iso_path" { default = "$HclIso" }
@@ -99,17 +111,17 @@ Write-Host 'Running Packer build...' -ForegroundColor Cyan
 & packer init template.pkr.hcl | Out-Null
 & packer build -force template.pkr.hcl | Out-Null
 
-#--- 7) Restart vmrest and retrieve VM ID via Basic auth
+#--- 7) Ensure vmrest daemon and retrieve VM ID via Basic auth
 $vmrestExe = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe'
 if (-not (Test-Path $vmrestExe)) { Write-Error "vmrest.exe not found at $vmrestExe"; exit 1 }
-# stop existing and restart
-Get-Process vmrest -ErrorAction SilentlyContinue | Stop-Process -Force
+# stop old instance if any, then start
+Get-Process vmrest -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Process -FilePath $vmrestExe -ArgumentList '-b' -WindowStyle Hidden
 Start-Sleep -Seconds 5
 
-$url     = 'http://127.0.0.1:8697/api/vms'
-$pair    = "${VmrestUser}:${VmrestPassword}"
-$token   = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
+$url    = 'http://127.0.0.1:8697/api/vms'
+$pair   = "${VmrestUser}:${VmrestPassword}"
+$token  = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
 $headers = @{ Authorization = "Basic $token" }
 
 try {
@@ -117,7 +129,7 @@ try {
   $BaseId = ($VMs | Where-Object name -eq 'vault-base').id
   Write-Host "Golden VM ID: $BaseId" -ForegroundColor Green
 } catch {
-  Write-Error "Authentication to vmrest failed. Please re-run 'vmrest.exe --config' and ensure the service is running."
+  Write-Error "Authentication to vmrest failed. Please re-run 'vmrest.exe --config' and ensure the service is running."  
   exit 1
 }
 
@@ -125,7 +137,7 @@ try {
 $tfDir = Join-Path $PSScriptRoot 'terraform'
 if (-not (Test-Path $tfDir)) { New-Item -Path $tfDir -ItemType Directory | Out-Null }
 
-$mainTf = @"
+$MainTf = @"
 terraform {
   required_providers {
     vmworkstation = {
@@ -142,7 +154,7 @@ provider "vmworkstation" {
 }
 "@
 if ($InstallVault) {
-  $mainTf += @"
+  $MainTf += @"
 resource "vmworkstation_vm" "vault" {
   sourceid     = "$BaseId"
   denomination = "CyberArk-Vault"
@@ -153,7 +165,7 @@ resource "vmworkstation_vm" "vault" {
 "@
 }
 foreach ($comp in @('PVWA','CPM','PSM')) {
-  $mainTf += @"
+  $MainTf += @"
 resource "vmworkstation_vm" "${comp.ToLower()}" {
   sourceid     = "$BaseId"
   denomination = "CyberArk-$comp"
@@ -163,9 +175,9 @@ resource "vmworkstation_vm" "${comp.ToLower()}" {
 }
 "@
 }
-$mainTf | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
+$MainTf | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
 
-$varsTf = @"
+$VarsTf = @"
 variable "vmrest_user" {
   type    = string
   default = "$VmrestUser"
@@ -175,9 +187,10 @@ variable "vmrest_password" {
   default = "$VmrestPassword"
 }
 "@
-$varsTf | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
+$VarsTf | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
 
-#--- 9) Run Terraform\ Write-Host 'Deploying via Terraform...' -ForegroundColor Cyan
+#--- 9) Run Terraform
+Write-Host 'Deploying via Terraform...' -ForegroundColor Cyan
 Push-Location $tfDir
 terraform init -upgrade | Out-Null
 terraform plan -out=tfplan
