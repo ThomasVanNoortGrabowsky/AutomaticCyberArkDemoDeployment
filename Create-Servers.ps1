@@ -1,7 +1,5 @@
 # Create-Servers.ps1
-# -------------------
-# Automated CyberArk lab:
-#  Unattended ISO → Packer golden image → Terraform clones (Vault optional + PVWA/CPM/PSM)
+# Automated CyberArk lab: unattended ISO → Packer golden image → Terraform clones
 
 $ErrorActionPreference = 'Stop'
 
@@ -31,93 +29,62 @@ $IsoPath        = Read-Host "1) Windows Server ISO path (e.g. C:\ISOs\SERVER_EVA
 $VmrestUser     = Read-Host "2) vmrest API username"
 $VmrestSecure   = Read-Host "3) vmrest API password" -AsSecureString
 $VmrestPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-  [Runtime.InteropServices.Marshal]::SecureStringToBSTR($VmrestSecure)
+    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($VmrestSecure)
 )
 $InstallVault   = (Read-Host "4) Install Vault server? (Y/N)").ToUpper() -eq 'Y'
 $DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
 $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
-# 3) Write Autounattend.xml (with WinPE language settings to skip keyboard prompt)
+# 3) Write Autounattend.xml (skipping the language/keyboard prompt)
 $autoXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
 
-  <!-- windowsPE: WinPE locale + disk/image setup -->
   <settings pass="windowsPE">
-    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" versionScope="nonSxS"
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
       <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
-      <InputLocale>en-US</InputLocale>
-      <SystemLocale>en-US</SystemLocale>
-      <UILanguage>en-US</UILanguage>
-      <UserLocale>en-US</UserLocale>
+      <InputLocale>en-US</InputLocale><SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage><UserLocale>en-US</UserLocale>
     </component>
-    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" versionScope="nonSxS">
-      <DiskConfiguration>
-        <WillShowUI>OnError</WillShowUI>
-        <Disk wcm:action="add">
-          <DiskID>0</DiskID>
-          <WillWipeDisk>true</WillWipeDisk>
-          <CreatePartitions>
-            <CreatePartition wcm:action="add"><Order>1</Order><Type>Primary</Type><Size>16384</Size></CreatePartition>
-            <CreatePartition wcm:action="add"><Order>2</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
-          </CreatePartitions>
-          <ModifyPartitions>
-            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>NTFS</Format><Label>System</Label><Active>true</Active></ModifyPartition>
-            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID><Format>NTFS</Format><Label>Windows</Label></ModifyPartition>
-          </ModifyPartitions>
-        </Disk>
-      </DiskConfiguration>
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <DiskConfiguration><WillShowUI>OnError</WillShowUI><Disk wcm:action="add">
+        <DiskID>0</DiskID><WillWipeDisk>true</WillWipeDisk>
+        <CreatePartitions>
+          <CreatePartition wcm:action="add"><Order>1</Order><Type>Primary</Type><Size>16384</Size></CreatePartition>
+          <CreatePartition wcm:action="add"><Order>2</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
+        </CreatePartitions>
+        <ModifyPartitions>
+          <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>NTFS</Format><Label>System</Label><Active>true</Active></ModifyPartition>
+          <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID><Format>NTFS</Format><Label>Windows</Label></ModifyPartition>
+        </ModifyPartitions>
+      </Disk></DiskConfiguration>
       <ImageInstall><OSImage><InstallFrom>
-        <MetaData wcm:action="add">
-          <Key>/IMAGE/NAME</Key>
-          <Value>Windows Server 2022 SERVERSTANDARDCORE</Value>
-        </MetaData>
+        <MetaData wcm:action="add"><Key>/IMAGE/NAME</Key><Value>Windows Server 2022 SERVERSTANDARDCORE</Value></MetaData>
       </InstallFrom></OSImage></ImageInstall>
-      <UserData>
-        <AcceptEula>true</AcceptEula>
-        <FullName>Administrator</FullName>
-        <Organization>CyberArk</Organization>
-      </UserData>
+      <UserData><AcceptEula>true</AcceptEula><FullName>Administrator</FullName><Organization>CyberArk</Organization></UserData>
     </component>
   </settings>
 
-  <!-- specialize: join domain -->
   <settings pass="specialize">
-    <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" versionScope="nonSxS">
+    <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <Identification>
-        <Credentials>
-          <Domain>$DomainName</Domain>
-          <Username>$DomainUser</Username>
-          <Password>Cyberark1</Password>
-        </Credentials>
+        <Credentials><Domain>$DomainName</Domain><Username>$DomainUser</Username><Password>Cyberark1</Password></Credentials>
         <JoinDomain>$DomainName</JoinDomain>
       </Identification>
     </component>
   </settings>
 
-  <!-- oobeSystem: auto-logon + hide EULA -->
   <settings pass="oobeSystem">
-    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" versionScope="nonSxS">
-      <InputLocale>en-US</InputLocale>
-      <SystemLocale>en-US</SystemLocale>
-      <UILanguage>en-US</UILanguage>
-      <UserLocale>en-US</UserLocale>
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <InputLocale>en-US</InputLocale><SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage><UserLocale>en-US</UserLocale>
     </component>
-    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" versionScope="nonSxS">
-      <AutoLogon>
-        <Username>Administrator</Username>
-        <Password><Value>Cyberark1</Value><PlainText>true</PlainText></Password>
-        <Enabled>true</Enabled>
-      </AutoLogon>
-      <OOBE>
-        <HideEULAPage>true</HideEULAPage>
-        <NetworkLocation>Work</NetworkLocation>
-        <ProtectYourPC>1</ProtectYourPC>
-      </OOBE>
-      <RegisteredOwner>Administrator</RegisteredOwner>
-      <RegisteredOrganization>CyberArk</RegisteredOrganization>
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <AutoLogon><Username>Administrator</Username><Password><Value>Cyberark1</Value><PlainText>true</PlainText></Password><Enabled>true</Enabled></AutoLogon>
+      <OOBE><HideEULAPage>true</HideEULAPage><NetworkLocation>Work</NetworkLocation><ProtectYourPC>1</ProtectYourPC></OOBE>
+      <RegisteredOwner>Administrator</RegisteredOwner><RegisteredOrganization>CyberArk</RegisteredOrganization>
     </component>
   </settings>
 
@@ -126,7 +93,7 @@ $autoXml = @"
 $autoXml | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
 Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
-# 4) Fallback netmap.conf in both ProgramData and Workstation paths
+# 4) Write fallback netmap.conf to both locations
 $wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
 $programData = Join-Path $env:ProgramData 'VMware'
 $pathsToFill = @(
@@ -149,22 +116,32 @@ foreach ($p in $pathsToFill) {
   Write-Host "-> netmap.conf written to $p" -ForegroundColor Green
 }
 
-# 5) Build Packer HCL template with dynamic ISO values
+# 5) Generate Packer HCL with dynamic ISO values and cd_files
 $hclIso   = $IsoPath.Replace('\','/')
 $checksum = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
 $packerHcl = @"
+variable "iso_path" {
+  type    = string
+  default = "$hclIso"
+}
+
+variable "iso_checksum" {
+  type    = string
+  default = "sha256:$checksum"
+}
+
 source "vmware-iso" "vault_base" {
-  iso_url           = "file:///$hclIso"
-  iso_checksum      = "sha256:$checksum"
-  network           = "nat"
-  communicator      = "winrm"
-  winrm_username    = "Administrator"
-  winrm_password    = "Cyberark1"
-  floppy_files      = ["Autounattend.xml"]
-  disk_size         = 81920
-  cpus              = 8
-  memory            = 32768
-  shutdown_command  = "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\""
+  iso_url      = "file:///${var.iso_path}"
+  iso_checksum = var.iso_checksum
+  network      = "nat"
+  communicator = "winrm"
+  winrm_username = "Administrator"
+  winrm_password = "Cyberark1"
+  cd_files       = ["Autounattend.xml"]
+  disk_size      = 81920
+  cpus           = 8
+  memory         = 32768
+  shutdown_command = "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\""
 }
 
 build {
@@ -240,8 +217,8 @@ resource "vmworkstation_vm" "$lower" {
 Set-Content (Join-Path $tfDir 'main.tf') $main -Encoding ASCII
 
 $vars = @"
-variable "vmrest_user"    { default = "$VmrestUser" }
-variable "vmrest_password"{ default = "$VmrestPassword" }
+variable "vmrest_user"     { default = "$VmrestUser" }
+variable "vmrest_password" { default = "$VmrestPassword" }
 "@
 Set-Content (Join-Path $tfDir 'variables.tf') $vars -Encoding ASCII
 
