@@ -73,8 +73,8 @@ $xml | Set-Content -Path (Join-Path $PSScriptRoot 'Autounattend.xml') -Encoding 
 Write-Host '-> Autounattend.xml generated.' -ForegroundColor Green
 
 #--- 3) Install Packer & Terraform if missing
-$packerDir  = Join-Path $PSScriptRoot 'packer-bin'
-$packerExe  = Join-Path $packerDir 'packer.exe'
+$packerDir = Join-Path $PSScriptRoot 'packer-bin'
+$packerExe = Join-Path $packerDir 'packer.exe'
 if (-not (Test-Path $packerExe)) {
   Write-Host '-> Downloading Packer v1.8.6...' -ForegroundColor Yellow
   $zip = "$env:TEMP\packer_1.8.6.zip"
@@ -100,8 +100,8 @@ variable "iso_path" { default = "$hclPath" }
 source "vmware-iso" "vault_base" {
   vm_name           = "vault-base"
   iso_url           = "file:///$hclPath"
-  iso_checksum_type = "sha256"
-  iso_checksum      = "$hash"
+  checksum_type     = "sha256"
+  checksum          = "$hash"
   floppy_files      = ["Autounattend.xml"]
   communicator      = "winrm"
   winrm_username    = "Administrator"
@@ -111,15 +111,17 @@ source "vmware-iso" "vault_base" {
   memory            = 32768
   shutdown_command  = "shutdown /s /t 5 /f /d p:4:1 /c 'Packer Shutdown'"
 }
-build { sources = ["source.vmware-iso.vault_base"] }
+build           { sources = ["source.vmware-iso.vault_base"] }
 "@
 $pkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
 Write-Host '-> Packer template written.' -ForegroundColor Green
 
 #--- 6) Run Packer build
 Write-Host '-> Running Packer init & build...' -ForegroundColor Cyan
-$initOut = & $packerExe init template.pkr.hcl 2>&1; if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed:`n$initOut"; exit 1 }
-$buildOut = & $packerExe build -force template.pkr.hcl 2>&1; if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed:`n$buildOut"; exit 1 }
+$initOut = & $packerExe init template.pkr.hcl 2>&1
+if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed:`n$initOut"; exit 1 }
+$buildOut = & $packerExe build -force template.pkr.hcl 2>&1
+if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed:`n$buildOut"; exit 1 }
 
 #--- 7) Stop & restart vmrest daemon, then fetch VM ID
 $vmrest = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe'
@@ -129,13 +131,12 @@ Get-Process vmrest -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAct
 Start-Process -FilePath $vmrest -ArgumentList '-b' -WindowStyle Hidden; Start-Sleep -Seconds 5
 
 # Compose Basic auth header
-$url     = 'http://127.0.0.1:8697/api/vms'
-$pair    = "${VmrestUser}:${VmrestPassword}"
-$bytes   = [Text.Encoding]::ASCII.GetBytes($pair)
-$token   = [Convert]::ToBase64String($bytes)
-$hdrs    = @{ Authorization = "Basic $token" }
+$url    = 'http://127.0.0.1:8697/api/vms'
+$pair   = "${VmrestUser}:${VmrestPassword}"
+$bytes  = [Text.Encoding]::ASCII.GetBytes($pair)
+$token  = [Convert]::ToBase64String($bytes)
+$hdrs   = @{ Authorization = "Basic $token" }
 
-# Retrieve VM list
 try {
   $vms = Invoke-RestMethod -Uri $url -Headers $hdrs
 } catch {
@@ -170,7 +171,7 @@ resource "vmworkstation_vm" "vault" {
 }
 "@
 }
-foreach ($c in @('PVWA','CPM','PSM')) {
+foreach ($c in 'PVWA','CPM','PSM') {
   $main += @"
 resource "vmworkstation_vm" "$($c.ToLower())" {
   sourceid     = "$BaseId"
@@ -184,8 +185,12 @@ resource "vmworkstation_vm" "$($c.ToLower())" {
 $main | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
 
 $vars = @"
-variable "vmrest_user" { default = "$VmrestUser" }
-variable "vmrest_password" { default = "$VmrestPassword" }
+variable "vmrest_user" {
+  default = "$VmrestUser"
+}
+variable "vmrest_password" {
+  default = "$VmrestPassword"
+}
 "@
 $vars | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
 
@@ -196,5 +201,4 @@ terraform init -upgrade | Out-Null
 terraform plan -out=tfplan
 terraform apply -auto-approve tfplan
 Pop-Location
-
 Write-Host 'Deployment complete!' -ForegroundColor Green
