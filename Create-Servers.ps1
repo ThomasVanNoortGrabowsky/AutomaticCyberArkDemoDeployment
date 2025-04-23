@@ -1,32 +1,31 @@
-Always show details
-
-Copy
-import os
-
-script = r"""# Create-Servers.ps1
-# CyberArk automated lab deployment using Packer + Terraform + VMware Workstation
+# Create-Servers.ps1
+# CyberArk lab deployment: Packer → golden image → Terraform clones (Vault optional, plus PVWA/CPM/PSM)
 
 $ErrorActionPreference = 'Stop'
-# Elevate to administrator if needed
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-    [Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process powershell "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+
+# 0) Elevate to Administrator
+if (-not ([Security.Principal.WindowsPrincipal] `
+        [Security.Principal.WindowsIdentity]::GetCurrent() `
+        ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Start-Process powershell `
+        "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" `
+        -Verb RunAs
     exit
 }
 
 # 1) User prompts
-$IsoPath        = Read-Host "1) Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)"
-$VmrestUser     = Read-Host "2) VMware REST API username"
-$VmrestSecure   = Read-Host "3) VMware REST API password" -AsSecureString
+$IsoPath        = Read-Host    "1) Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)"
+$VmrestUser     = Read-Host    "2) VMware REST API username"
+$VmrestSecure   = Read-Host    "3) VMware REST API password" -AsSecureString
 $VmrestPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
     [Runtime.InteropServices.Marshal]::SecureStringToBSTR($VmrestSecure)
 )
 $InstallVault   = (Read-Host "4) Install Vault server? (Y/N)").ToUpper() -eq 'Y'
-$DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
-$DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
-$DomainUser     = Read-Host "7) Domain join user"
+$DeployPath     = Read-Host    "5) Base folder for VMs (e.g. C:\VMs)"
+$DomainName     = Read-Host    "6) Domain to join (e.g. corp.local)"
+$DomainUser     = Read-Host    "7) Domain join user"
 
-# 2) Generate Autounattend.xml for unattended Windows install
+# 2) Generate Autounattend.xml
 $autoXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
@@ -54,11 +53,11 @@ $autoXml = @"
     <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <Identification>
         <Credentials>
-          <Domain>${DomainName}</Domain>
-          <Username>${DomainUser}</Username>
+          <Domain>$DomainName</Domain>
+          <Username>$DomainUser</Username>
           <Password>Cyberark1</Password>
         </Credentials>
-        <JoinDomain>${DomainName}</JoinDomain>
+        <JoinDomain>$DomainName</JoinDomain>
       </Identification>
     </component>
   </settings>
@@ -87,6 +86,7 @@ $autoXml = @"
   </settings>
 </unattend>
 "@
+
 $autoXml | Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
 Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
@@ -94,35 +94,39 @@ Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 $sourceNetmap = Join-Path $env:ProgramData 'VMware\netmap.conf'
 $wsDir        = 'C:\Program Files (x86)\VMware\VMware Workstation'
 $destNetmap   = Join-Path $wsDir 'netmap.conf'
+
 if (-not (Test-Path $destNetmap)) {
     if (Test-Path $sourceNetmap) {
         Copy-Item -Path $sourceNetmap -Destination $destNetmap -Force
         Write-Host "-> Copied netmap.conf for Packer." -ForegroundColor Green
     } else {
-        Write-Error "netmap.conf not found at $sourceNetmap. Run Virtual Network Editor once."
+        Write-Error "netmap.conf not found at $sourceNetmap. Run Virtual Network Editor once to regenerate it."
         exit 1
     }
 }
 
 # 4) Write Packer template
 $hclIsoPath = $IsoPath.Replace('\','/')
+$hash       = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
+
 $packerHcl = @"
 source "vmware-iso" "vault_base" {
-  iso_url       = "file:///$hclIsoPath"
-  iso_checksum  = "sha256:$(Get-FileHash -Algorithm SHA256 $IsoPath).Hash"
-  communicator  = "winrm"
-  winrm_username = "Administrator"
-  winrm_password = "Cyberark1"
-  floppy_files   = ["Autounattend.xml"]
-  disk_size      = 81920
-  cpus           = 8
-  memory         = 32768
-  shutdown_command = "shutdown /s /t 5 /f /d p:4:1 /c `"Packer Shutdown`""
+  iso_url           = "file:///$hclIsoPath"
+  iso_checksum      = "sha256:$hash"
+  communicator      = "winrm"
+  winrm_username    = "Administrator"
+  winrm_password    = "Cyberark1"
+  floppy_files      = ["Autounattend.xml"]
+  disk_size         = 81920
+  cpus              = 8
+  memory            = 32768
+  shutdown_command  = "shutdown /s /t 5 /f /d p:4:1 /c `"Packer Shutdown`""
 }
 build {
   sources = ["source.vmware-iso.vault_base"]
 }
 "@
+
 Set-Content -Path "$PSScriptRoot\template.pkr.hcl" -Value $packerHcl -Encoding ASCII
 Write-Host "-> Packer template written." -ForegroundColor Green
 
@@ -138,16 +142,18 @@ Stop-Process -Name vmrest -ErrorAction SilentlyContinue -Force
 Start-Process "$wsDir\vmrest.exe" -ArgumentList "-b" -WindowStyle Hidden
 Start-Sleep -Seconds 5
 
-# 7) Fetch golden VM ID via Basic auth header
-$url   = 'http://127.0.0.1:8697/api/vms'
-$pair  = "${VmrestUser}:${VmrestPassword}"
-$token = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
+# 7) Fetch golden VM ID via Basic auth
+$url    = 'http://127.0.0.1:8697/api/vms'
+$pair   = $VmrestUser + ':' + $VmrestPassword
+$token  = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
 $headers = @{ Authorization = "Basic $token" }
+
 try {
     $VMs = Invoke-RestMethod -Uri $url -Headers $headers
 } catch {
     Write-Error "Authentication to vmrest failed!"; exit 1
 }
+
 $BaseId = ($VMs | Where-Object name -eq 'vault_base').id
 Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
 
@@ -161,8 +167,8 @@ $main = @"
 terraform {
   required_providers {
     vmworkstation = {
-      source = "elsudano/vmworkstation"
-      version = ">=1.0.4"
+      source  = "elsudano/vmworkstation"
+      version = ">= 1.0.4"
     }
   }
 }
@@ -174,6 +180,7 @@ provider "vmworkstation" {
 }
 
 "@
+
 if ($InstallVault) {
     $main += @"
 resource "vmworkstation_vm" "vault" {
@@ -185,9 +192,11 @@ resource "vmworkstation_vm" "vault" {
 }
 "@
 }
+
 foreach ($c in 'PVWA','CPM','PSM') {
+    $lower = $c.ToLower()
     $main += @"
-resource "vmworkstation_vm" "${c.ToLower()}" {
+resource "vmworkstation_vm" "$lower" {
   sourceid     = "$BaseId"
   denomination = "CyberArk-$c"
   processors   = 4
@@ -196,6 +205,7 @@ resource "vmworkstation_vm" "${c.ToLower()}" {
 }
 "@
 }
+
 Set-Content -Path (Join-Path $tfDir 'main.tf') -Value $main -Encoding ASCII
 
 # variables.tf
@@ -207,6 +217,7 @@ variable "vmrest_password" {
   default = "$VmrestPassword"
 }
 "@
+
 Set-Content -Path (Join-Path $tfDir 'variables.tf') -Value $vars -Encoding ASCII
 
 # 9) Terraform deploy
@@ -217,12 +228,3 @@ terraform apply -auto-approve tfplan | Write-Host
 Pop-Location
 
 Write-Host "Deployment complete!" -ForegroundColor Green
-"""
-# Write to file
-file_path = '/mnt/data/Create-Servers.ps1'
-with open(file_path, 'w') as f:
-    f.write(script)
-
-# Display the script to the user
-print(f"Updated script written to {file_path}\n")
-print(script)
