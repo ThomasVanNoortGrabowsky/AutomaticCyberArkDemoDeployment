@@ -116,16 +116,18 @@ $autoXml = @"
 $autoXml | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
 Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
-### 4) Fallback netmap.conf ###
+# 4) Fallback netmap.conf in both locations
 $wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
 $programData = Join-Path $env:ProgramData 'VMware'
-foreach ($dest in @(
-    Join-Path $wsDir 'netmap.conf',
-    Join-Path $programData 'netmap.conf'
-)) {
-  $d = Split-Path $dest -Parent
-  if (-not (Test-Path $d)) { New-Item $d -ItemType Directory -Force | Out-Null }
-  @"
+
+# build an array of the two full paths
+$pathsToFill = @(
+  Join-Path $wsDir       'netmap.conf'
+  Join-Path $programData 'netmap.conf'
+)
+
+# write out the minimal netmap.conf to each
+$netmap = @"
 # Minimal netmap.conf for Packer
 network0.name   = "Bridged"
 network0.device = "vmnet0"
@@ -133,8 +135,13 @@ network1.name   = "HostOnly"
 network1.device = "vmnet1"
 network8.name   = "NAT"
 network8.device = "vmnet8"
-"@ | Set-Content $dest -Encoding ASCII
-  Write-Host "-> netmap.conf written to $dest" -ForegroundColor Green
+"@
+
+foreach ($dest in $pathsToFill) {
+    $dir = Split-Path $dest -Parent
+    if (-not (Test-Path $dir)) { New-Item -Path $dir -ItemType Directory -Force | Out-Null }
+    $netmap | Set-Content -Path $dest -Encoding ASCII
+    Write-Host "-> netmap.conf written to $dest" -ForegroundColor Green
 }
 
 ### 5) Generate Packer HCL ###
