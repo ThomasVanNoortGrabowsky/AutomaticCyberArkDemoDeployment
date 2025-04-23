@@ -65,24 +65,26 @@ if (-not (Get-Command terraform -ErrorAction SilentlyContinue)) {
 }
 
 #--- 2) Write out Packer HCL template
+# Convert Windows path to forward slashes for HCL
+$hclIsoPath = $IsoPath -replace '\\','/'  
 $packerHcl = @"
 variable "iso_path" {
   type    = string
-  default = "$IsoPath"
+  default = "$hclIsoPath"
 }
 
 source "vmware-iso" "vault_base" {
   vm_name           = "cyberark-vault-base"
-  iso_url           = "file://\${var.iso_path}"
+  iso_url           = "file:///$hclIsoPath"
   iso_checksum_type = "sha256"
-  floppy_files      = ["Autounattend.xml"]      # for unattended install
+  floppy_files      = ["Autounattend.xml"]
   communicator      = "winrm"
   winrm_username    = "Administrator"
   winrm_password    = "P@ssw0rd!"
 
-  disk_size         = 81920     # 80 GB
+  disk_size         = 81920
   cpus              = 8
-  memory            = 32768     # 32 GB
+  memory            = 32768
 
   shutdown_command  = "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\""
 }
@@ -141,12 +143,12 @@ provider "vmworkstation" {
 if ($InstallVault) {
   $tfMain += @"
 resource "vmworkstation_vm" "vault" {
-  sourceid     = "$baseId"
+  sourceid     = "${baseId}"
   denomination = "CyberArk-Vault"
   description  = "Vault server (8 CPU, 32 GB RAM, 2×80 GB)"
   processors   = 8
   memory       = 32768
-  path         = "${DeployPath}\CyberArk-Vault"
+  path         = "${DeployPath}/CyberArk-Vault"
 }
 "@
 }
@@ -156,12 +158,12 @@ $components = @("PVWA","CPM","PSM")
 foreach ($comp in $components) {
   $tfMain += @"
 resource "vmworkstation_vm" "${comp.ToLower()}" {
-  sourceid     = "$baseId"
-  denomination = "CyberArk-$comp"
-  description  = "$comp server (4 CPU, 8 GB RAM, 2×80 GB)"
+  sourceid     = "${baseId}"
+  denomination = "CyberArk-${comp}"
+  description  = "${comp} server (4 CPU, 8 GB RAM, 2×80 GB)"
   processors   = 4
   memory       = 8192
-  path         = "${DeployPath}\CyberArk-$comp"
+  path         = "${DeployPath}/CyberArk-${comp}"
 }
 "@
 }
@@ -172,11 +174,11 @@ $tfMain | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
 $tfVars = @"
 variable "vmrest_user" {
   type    = string
-  default = "$VmrestUser"
+  default = "${VmrestUser}"
 }
 variable "vmrest_password" {
   type    = string
-  default = "$VmrestPassword"
+  default = "${VmrestPassword}"
 }
 "@
 $tfVars | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
