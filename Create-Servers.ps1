@@ -98,16 +98,15 @@ Write-Host 'Running Packer build...' -ForegroundColor Cyan
 
 #--- 7) Retrieve golden VM ID
 $url    = 'http://127.0.0.1:8697/api/vms'
-# assemble and base64-encode your credentials
-$pair   = "$VmrestUser:$VmrestPassword"
+$pair = "${VmrestUser}:${VmrestPassword}"
 $bytes  = [System.Text.Encoding]::ASCII.GetBytes($pair)
 $token  = [Convert]::ToBase64String($bytes)
 $headers = @{ Authorization = "Basic $token" }
 
-# give the REST daemon a few seconds to spin up
+# give vmrest a moment to start up
 Start-Sleep -Seconds 5
 
-# call the API with the explicit header
+# call the API with our explicit header
 $VMs    = Invoke-RestMethod -Uri $url -Headers $headers
 $BaseId = ($VMs | Where-Object name -eq 'vault-base').id
 
