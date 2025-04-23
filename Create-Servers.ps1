@@ -39,7 +39,6 @@ $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
 # -- 3) Write Autounattend.xml for Unattended + Domain-Join --
-# 3) Generate corrected Autounattend.xml for unattended install + domain join
 $autoXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
@@ -134,7 +133,7 @@ $autoXml = @"
 
 # Write out the fixed file
 $autoXml | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
-Write-Host "-> Corrected Autounattend.xml generated." -ForegroundColor Green
+Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
 # 4) Write minimal netmap.conf to both locations
 $wsDir          = 'C:\Program Files (x86)\VMware\VMware Workstation'
