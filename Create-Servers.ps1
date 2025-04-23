@@ -11,7 +11,7 @@ if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
 }
 
 # 1) Ensure Packer locally (no PATH issues)
-$packerVersion      = "1.11.4"  # adjust if you want a newer release
+$packerVersion      = "1.11.4"
 $packerInstallDir   = Join-Path $PSScriptRoot "packer-bin"
 $packerExe          = Join-Path $packerInstallDir "packer.exe"
 
@@ -104,14 +104,14 @@ source "vmware-iso" "vault_base" {
   disk_size         = 81920
   cpus              = 8
   memory            = 32768
-  shutdown_command  = "shutdown /s /t 5 /f /d p:4:1 /c `"Packer Shutdown`""
+  shutdown_command  = "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\""
 }
 build { sources = ["source.vmware-iso.vault_base"] }
 "@
 Set-Content "$PSScriptRoot\template.pkr.hcl" $packerHcl -Encoding ASCII
 Write-Host "-> Packer template written." -ForegroundColor Green
 
-# 6) Run Packer init & build using our local packer.exe
+# 6) Run Packer init & build using local packer.exe
 Write-Host "-> Running Packer init & build..." -ForegroundColor Cyan
 & $packerExe init "$PSScriptRoot\template.pkr.hcl" 2>&1 | Write-Host
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed"; exit 1 }
@@ -134,7 +134,7 @@ try {
 $BaseId = ($VMs | Where-Object name -eq 'vault_base').id
 Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
 
-# 8) Generate Terraform files and apply
+# 8) Generate Terraform files and deploy
 $tfDir = Join-Path $PSScriptRoot 'terraform'
 if (Test-Path $tfDir) { Remove-Item $tfDir -Recurse -Force }
 New-Item $tfDir -ItemType Directory | Out-Null
@@ -145,6 +145,7 @@ terraform {
     vmworkstation = { source = "elsudano/vmworkstation"; version = ">= 1.0.4" }
   }
 }
+
 provider "vmworkstation" {
   user     = var.vmrest_user
   password = var.vmrest_password
