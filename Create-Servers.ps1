@@ -94,7 +94,7 @@ Write-Host '-> Calculating ISO checksum...' -ForegroundColor Cyan
 $hash = (Get-FileHash -Path $IsoPath -Algorithm SHA256).Hash
 
 #--- 5) Write Packer template
-$hclPath = $IsoPath.Replace('\\','/')
+$hclPath = $IsoPath.Replace('\','/')
 $pkrHcl = @"
 variable "iso_path" { default = "$hclPath" }
 source "vmware-iso" "vault_base" {
@@ -113,7 +113,8 @@ source "vmware-iso" "vault_base" {
 }
 build { sources = ["source.vmware-iso.vault_base"] }
 "@
-$pkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
+# Write without BOM to avoid invalid characters
+$pkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding ASCII
 Write-Host '-> Packer template written.' -ForegroundColor Green
 
 #--- 6) Run Packer build
