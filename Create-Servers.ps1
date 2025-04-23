@@ -1,28 +1,32 @@
 <#
 .SYNOPSIS
-  Build a golden Windows Server VM via Packer and clone via Terraform.
+  Build and deploy CyberArk servers via Packer and Terraform on VMware Workstation.
 
 .DESCRIPTION
-  1. Prompts for ISO path, vmrest credentials, Vault inclusion, deploy path, and domain details.
-  2. Generates Autounattend.xml dynamically with domain join.
-  3. Ensures Packer and Terraform are installed.
-  4. Builds a golden VM via Packer (vmware-iso).
-  5. Retrieves the golden VM ID from the Workstation REST API.
-  6. Generates a Terraform project (main.tf, variables.tf) using here-strings, then runs init, plan, apply.
+  1. Prompts for ISO path, vmrest API credentials, Vault inclusion, deploy path, and domain details.
+  2. Generates Autounattend.xml for unattended Windows install with domain join.
+  3. Installs Packer and Terraform via winget if missing.
+  4. Builds a golden "vault-base" VM image using Packer.
+  5. Retrieves the new VM's ID from the Workstation REST API using Basic auth.
+  6. Generates Terraform configs (main.tf, variables.tf) and applies them to clone Vault (optional) plus PVWA/CPM/PSM.
 #>
 
-#--- 1) Prompt for required inputs
-$IsoPath        = Read-Host 'Enter Windows Server ISO path (e.g. C:\\ISOs\\SERVER_EVAL.iso)'
-$VmrestUser     = Read-Host 'Enter VMware Workstation REST API username'
-$VmrestPassword = Read-Host 'Enter VMware Workstation REST API password'
-$InstallVault   = (Read-Host 'Install Vault server? (Y/N)') -match '^[Yy]$'
-$DeployPath     = Read-Host 'Enter base folder path for VMs (e.g. C:\\VMs)'
-$DomainName     = Read-Host 'Enter domain to join (e.g. corp.local)'
-$DomainUser     = Read-Host 'Enter domain join user (e.g. joinuser)'
-$DomainPass     = 'Cyberark1'
+#--- 1) Prompt for inputs
+$IsoPath = Read-Host 'Enter Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)'
+$VmrestUser = Read-Host 'VMware REST API user [default: vmrest]'
+if ([string]::IsNullOrWhiteSpace($VmrestUser)) { $VmrestUser = 'vmrest' }
+$VmrestSecure = Read-Host 'VMware REST API password' -AsSecureString
+$VmrestPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($VmrestSecure)
+)
+$InstallVault = (Read-Host 'Install Vault server? (Y/N)') -match '^[Yy]$'
+$DeployPath = Read-Host 'Enter base folder path for VMs (e.g. C:\VMs)'
+$DomainName = Read-Host 'Enter domain to join (e.g. corp.local)'
+$DomainUser = Read-Host 'Enter domain join user (e.g. joinuser)'
+$DomainPass = 'Cyberark1'
 
 #--- 2) Generate Autounattend.xml
-$UnattendXml = @"
+$Unattend = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
   <settings pass="windowsPE">
@@ -50,27 +54,27 @@ $UnattendXml = @"
   </settings>
 </unattend>
 "@
-$UnattendXml | Set-Content -Path (Join-Path $PSScriptRoot 'Autounattend.xml') -Encoding UTF8
+$Unattend | Set-Content -Path (Join-Path $PSScriptRoot 'Autounattend.xml') -Encoding UTF8
 Write-Host 'Autounattend.xml generated.' -ForegroundColor Green
 
 #--- 3) Ensure Packer & Terraform are installed
 $tools = @{ packer = 'HashiCorp.Packer'; terraform = 'HashiCorp.Terraform' }
 foreach ($tool in $tools.Keys) {
-    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        Write-Host "Installing $tool via winget..." -ForegroundColor Yellow
-        Start-Process winget -ArgumentList 'install','--id',$tools[$tool],'-e','--accept-package-agreements','--accept-source-agreements' -NoNewWindow -Wait
-        $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
-        Write-Host "$tool installed." -ForegroundColor Green
-    }
+  if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+    Write-Host "Installing $tool via winget..." -ForegroundColor Yellow
+    Start-Process winget -ArgumentList 'install','--id',$tools[$tool],'-e','--accept-package-agreements','--accept-source-agreements' -NoNewWindow -Wait
+    $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
+    Write-Host "$tool installed." -ForegroundColor Green
+  }
 }
 
 #--- 4) Compute ISO checksum
 Write-Host 'Calculating ISO checksum...' -ForegroundColor Cyan
 $IsoHash = (Get-FileHash -Path $IsoPath -Algorithm SHA256).Hash
 
-#--- 5) Write Packer template
+#--- 5) Write Packer HCL template
 $HclIso = $IsoPath -replace '\\','/'
-$PkrHcl = @"
+$Pkr = @"
 variable "iso_path" { default = "$HclIso" }
 source "vmware-iso" "vault_base" {
   vm_name           = "vault-base"
@@ -88,28 +92,28 @@ source "vmware-iso" "vault_base" {
 }
 build { sources = ["source.vmware-iso.vault_base"] }
 "@
-$PkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
+$Pkr | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
 Write-Host 'Packer HCL template written.' -ForegroundColor Green
 
-#--- 6) Build golden image
+#--- 6) Build golden image via Packer
 Write-Host 'Running Packer build...' -ForegroundColor Cyan
 & packer init template.pkr.hcl | Out-Null
 & packer build -force template.pkr.hcl | Out-Null
 
-#--- 7) Retrieve golden VM ID
+#--- 7) Retrieve golden VM ID via Basic auth header
 $url    = 'http://127.0.0.1:8697/api/vms'
-$pair = "${VmrestUser}:${VmrestPassword}"
+$pair   = "$VmrestUser`:$VmrestPassword"
 $bytes  = [System.Text.Encoding]::ASCII.GetBytes($pair)
 $token  = [Convert]::ToBase64String($bytes)
 $headers = @{ Authorization = "Basic $token" }
-
-# give vmrest a moment to start up
 Start-Sleep -Seconds 5
-
-# call the API with our explicit header
-$VMs    = Invoke-RestMethod -Uri $url -Headers $headers
+try {
+  $VMs = Invoke-RestMethod -Uri $url -Headers $headers
+} catch {
+  Write-Error "Authentication to vmrest failed. Please check your credentials."
+  exit 1
+}
 $BaseId = ($VMs | Where-Object name -eq 'vault-base').id
-
 Write-Host "Golden VM ID: $BaseId" -ForegroundColor Green
 
 #--- 8) Generate Terraform project
