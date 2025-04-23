@@ -97,11 +97,25 @@ Write-Host 'Running Packer build...' -ForegroundColor Cyan
 & packer build -force template.pkr.hcl | Out-Null
 
 #--- 7) Retrieve golden VM ID
-$Cred = New-Object System.Management.Automation.PSCredential($VmrestUser,(ConvertTo-SecureString $VmrestPassword -AsPlainText -Force))
+$url = 'http://127.0.0.1:8697/api'
+$Cred = New-Object System.Management.Automation.PSCredential(
+    $VmrestUser,
+    (ConvertTo-SecureString $VmrestPassword -AsPlainText -Force)
+)
+
+# give the REST daemon a few seconds to come up
 Start-Sleep -Seconds 5
-$VMs = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Credential $Cred
+
+# explicitly request Basic authentication
+$VMs = Invoke-RestMethod `
+  -Uri "$url/vms" `
+  -Credential $Cred `
+  -Authentication Basic
+
+# pull out the vault‐base VM’s ID
 $BaseId = ($VMs | Where-Object name -eq 'vault-base').id
 Write-Host "Golden VM ID: $BaseId" -ForegroundColor Green
+
 
 #--- 8) Generate Terraform project
 $tfDir = Join-Path $PSScriptRoot 'terraform'
