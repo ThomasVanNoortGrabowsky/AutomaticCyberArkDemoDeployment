@@ -39,35 +39,102 @@ $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
 # -- 3) Write Autounattend.xml for Unattended + Domain-Join --
+# 3) Generate corrected Autounattend.xml for unattended install + domain join
 $autoXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <!-- windowsPE pass: disk partitioning + image install -->
   <settings pass="windowsPE">
     <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" versionScope="nonSxS">
-      <ImageInstall><OSImage><InstallFrom>
-        <MetaData wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-          <Key>/IMAGE/NAME</Key>
-          <Value>Windows Server 2022 SERVERSTANDARDCORE</Value>
-        </MetaData>
-      </InstallFrom><WillShowUI>OnError</WillShowUI></OSImage></ImageInstall>
-      <UserData><AcceptEula>true</AcceptEula><FullName>Administrator</FullName><Organization>CyberArk</Organization></UserData>
+      <DiskConfiguration>
+        <WillShowUI>OnError</WillShowUI>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order><Type>Primary</Type><Size>16384</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order><Type>Primary</Type><Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order><PartitionID>1</PartitionID>
+              <Format>NTFS</Format><Label>System</Label><Active>true</Active>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order><PartitionID>2</PartitionID>
+              <Format>NTFS</Format><Label>Windows</Label>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+              <Key>/IMAGE/NAME</Key>
+              <Value>Windows Server 2022 SERVERSTANDARDCORE</Value>
+            </MetaData>
+          </InstallFrom>
+        </OSImage>
+      </ImageInstall>
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>Administrator</FullName>
+        <Organization>CyberArk</Organization>
+      </UserData>
     </component>
   </settings>
+
+  <!-- specialize pass: domain join -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" versionScope="nonSxS">
-      <Identification><Credentials>
-        <Domain>$DomainName</Domain>
-        <Username>$DomainUser</Username>
-        <Password>Cyberark1</Password>
-      </Credentials>
-      <JoinDomain>$DomainName</JoinDomain>
+      <Identification>
+        <Credentials>
+          <Domain>$DomainName</Domain>
+          <Username>$DomainUser</Username>
+          <Password>Cyberark1</Password>
+        </Credentials>
+        <JoinDomain>$DomainName</JoinDomain>
       </Identification>
+    </component>
+  </settings>
+
+  <!-- oobeSystem pass: locale, auto-logon, hide EULA -->
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" versionScope="nonSxS">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" versionScope="nonSxS">
+      <AutoLogon>
+        <Username>Administrator</Username>
+        <Password>
+          <Value>Cyberark1</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <Enabled>true</Enabled>
+      </AutoLogon>
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>1</ProtectYourPC>
+      </OOBE>
+      <RegisteredOwner>Administrator</RegisteredOwner>
+      <RegisteredOrganization>CyberArk</RegisteredOrganization>
     </component>
   </settings>
 </unattend>
 "@
+
+# Write out the fixed file
 $autoXml | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
-Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
+Write-Host "-> Corrected Autounattend.xml generated." -ForegroundColor Green
 
 # 4) Write minimal netmap.conf to both locations
 $wsDir          = 'C:\Program Files (x86)\VMware\VMware Workstation'
