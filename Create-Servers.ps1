@@ -8,7 +8,8 @@
   3. Installs Packer & Terraform if missing.
   4. Builds a golden "vault-base" VM image using Packer.
   5. Stops and restarts vmrest daemon (requires Administrator), then retrieves the VM ID via Basic auth.
-  6. Generates Terraform configs (main.tf, variables.tf) and applies them to clone Vault (optional) plus PVWA/CPM/PSM.
+  6. Ensures VMware netmap.conf is present or creates a default one.
+  7. Generates Terraform configs (main.tf, variables.tf) and applies them to clone Vault (optional) plus PVWA/CPM/PSM.
 #>
 
 # Fail fast on errors
@@ -94,7 +95,7 @@ Write-Host '-> Calculating ISO checksum...' -ForegroundColor Cyan
 $hash = (Get-FileHash -Path $IsoPath -Algorithm SHA256).Hash
 
 #--- 5) Write Packer template
-$hclPath = $IsoPath.Replace('\','/')
+$hclPath = $IsoPath.Replace('\\','/')
 $pkrHcl = @"
 variable "iso_path" { default = "$hclPath" }
 source "vmware-iso" "vault_base" {
@@ -112,52 +113,56 @@ source "vmware-iso" "vault_base" {
 }
 build { sources = ["source.vmware-iso.vault_base"] }
 "@
-# Write without BOM to avoid invalid characters
+# Write without BOM
 $pkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding ASCII
 Write-Host '-> Packer template written.' -ForegroundColor Green
 
-#--- Ensure VMware network mapping file exists
-$sourceNetmap = 'C:\ProgramData\VMware\netmap.conf'
-$destNetmap   = 'C:\Program Files (x86)\VMware\VMware Workstation\netmap.conf'
-if (-not (Test-Path $destNetmap)) {
-    if (Test-Path $sourceNetmap) {
-        Copy-Item -Path $sourceNetmap -Destination $destNetmap -Force
-        Write-Host '-> netmap.conf copied to Workstation folder.' -ForegroundColor Green
-    } else {
-        Write-Warning 'netmap.conf not found under ProgramData; Packer network mapping may still fail.'
-    }
+#--- Ensure VMware network mapping file exists or create default
+$dest = 'C:\Program Files (x86)\VMware\VMware Workstation\netmap.conf'
+if (-not (Test-Path $dest)) {
+  Write-Host '-> netmap.conf missing; creating default mappings.' -ForegroundColor Yellow
+  $map = @"
+# Auto-generated netmap.conf
+network0.name = "Bridged"
+network0.device = "vmnet0"
+network1.name = "HostOnly"
+network1.device = "vmnet1"
+network8.name = "NAT"
+network8.device = "vmnet8"
+"@
+  $map | Set-Content -Path $dest -Encoding ASCII
+  Write-Host '-> Default netmap.conf created.' -ForegroundColor Green
 }
 
-#--- 6) Run Packer build) Run Packer build) Run Packer build) Run Packer build
+#--- 6) Run Packer build
 Write-Host '-> Running Packer init & build...' -ForegroundColor Cyan
 $initOut = & $packerExe init template.pkr.hcl 2>&1; if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed:`n$initOut"; exit 1 }
 $buildOut = & $packerExe build -force template.pkr.hcl 2>&1; if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed:`n$buildOut"; exit 1 }
 
 #--- 7) Stop & restart vmrest daemon, then fetch VM ID
 $vmrest = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe'
-if (-not (Test-Path $vmrest)) { Write-Error "vmrest.exe not found at $vmrest"; exit 1 }
 Write-Host '-> Restarting vmrest daemon...' -ForegroundColor Cyan
 Get-Process vmrest -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Process -FilePath $vmrest -ArgumentList '-b' -WindowStyle Hidden; Start-Sleep -Seconds 5
 
-# Compose Basic auth header
-$url    = 'http://127.0.0.1:8697/api/vms'
-$pair   = "${VmrestUser}:${VmrestPassword}"
-$bytes  = [Text.Encoding]::ASCII.GetBytes($pair)
-$token  = [Convert]::ToBase64String($bytes)
-$hdrs   = @{ Authorization = "Basic $token" }
-
+# Basic auth header\<$EOF
+\$url    = 'http://127.0.0.1:8697/api/vms'
+\$pair   = "\$VmrestUser:\$VmrestPassword"
+\$bytes  = [Text.Encoding]::ASCII.GetBytes(\$pair)
+\$token  = [Convert]::ToBase64String(\$bytes)
+\$hdrs   = @{ Authorization = "Basic \$token" }
+EOF
 try {
-  $vms = Invoke-RestMethod -Uri $url -Headers $hdrs
+  \$vms = Invoke-RestMethod -Uri \$url -Headers \$hdrs
 } catch {
-  Write-Error "Failed to authenticate to vmrest at $url. Check credentials/service."; exit 1
+  Write-Error "Failed to authenticate to vmrest at \$url. Check credentials/service."; exit 1
 }
-$BaseId = ($vms | Where-Object { $_.name -eq 'vault-base' }).id
-Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
+\$BaseId = (\$vms | Where-Object { \$_.name -eq 'vault-base' }).id
+Write-Host "-> Golden VM ID: \$BaseId" -ForegroundColor Green
 
 #--- 8) Generate Terraform configs
-$tfDir = Join-Path $PSScriptRoot 'terraform'; if (-not (Test-Path $tfDir)) { New-Item -ItemType Directory -Path $tfDir | Out-Null }
-$main = @"
+\$tfDir = Join-Path \$PSScriptRoot 'terraform'; if (-not (Test-Path \$tfDir)) { New-Item -ItemType Directory -Path \$tfDir | Out-Null }
+\$main = @"
 terraform {
   required_providers {
     vmworkstation = { source = "elsudano/vmworkstation" version = ">=1.0.4" }
@@ -170,46 +175,39 @@ provider "vmworkstation" {
   url      = "http://127.0.0.1:8697/api"
 }
 "@
-if ($InstallVault) {
-  $main += @"
+if (\$InstallVault) {
+  \$main += @"
 resource "vmworkstation_vm" "vault" {
-  sourceid     = "$BaseId"
+  sourceid     = "\$BaseId"
   denomination = "CyberArk-Vault"
   processors   = 8
   memory       = 32768
-  path         = "$DeployPath\CyberArk-Vault"
+  path         = "\$DeployPath\CyberArk-Vault"
 }
 "@
 }
-foreach ($c in 'PVWA','CPM','PSM') {
-  $main += @"
-resource "vmworkstation_vm" "$($c.ToLower())" {
-  sourceid     = "$BaseId"
-  denomination = "CyberArk-$c"
+foreach (\$c in 'PVWA','CPM','PSM') {
+  \$main += @"
+resource "vmworkstation_vm" "\$([\$c.ToLower()])" {
+  sourceid     = "\$BaseId"
+  denomination = "CyberArk-\$c"
   processors   = 4
   memory       = 8192
-  path         = "$DeployPath\CyberArk-$c"
+  path         = "\$DeployPath\CyberArk-\$c"
 }
 "@
 }
+\$main | Set-Content -Path (Join-Path \$tfDir 'main.tf') -Encoding UTF8
 
-# Write Terraform main.tf
-$main | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
-
-# Generate variables.tf
-$vars = @"
-variable "vmrest_user" {
-  default = "$VmrestUser"
-}
-variable "vmrest_password" {
-  default = "$VmrestPassword"
-}
+\$vars = @"
+variable "vmrest_user" { default = "\$VmrestUser" }
+variable "vmrest_password" { default = "\$VmrestPassword" }
 "@
-$vars | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
+\$vars | Set-Content -Path (Join-Path \$tfDir 'variables.tf') -Encoding UTF8
 
 #--- 9) Run Terraform deploy
 Write-Host '-> Deploying via Terraform...' -ForegroundColor Cyan
-Push-Location $tfDir
+Push-Location \$tfDir
 terraform init -upgrade | Out-Null
 terraform plan -out=tfplan
 terraform apply -auto-approve tfplan
