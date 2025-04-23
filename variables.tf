@@ -10,7 +10,7 @@ variable "vmrest_password" {
 }
 
 variable "base_vm_id" {
-  description = "ID of an existing VM to clone (fetch this via REST API Explorer or curl/Invoke-RestMethod)"
+  description = "ID of an existing VM to clone"
   type        = string
 }
 
