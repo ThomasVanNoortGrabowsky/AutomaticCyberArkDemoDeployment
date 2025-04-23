@@ -46,87 +46,121 @@ $DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
 $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
-### 3) Generate corrected Autounattend.xml for Windows 11 ###
-$xml = @'
+### 3) Generate Autounattend.xml ###
+$xmlTemplate = @'
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-  <servicing/>
-  <settings pass="windowsPE">
-    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <DiskConfiguration>
-        <Disk wcm:action="add">
-          <CreatePartitions>
-            <CreatePartition wcm:action="add"><Order>1</Order><Size>500</Size><Type>Primary</Type></CreatePartition>
-            <CreatePartition wcm:action="add"><Order>2</Order><Size>100</Size><Type>EFI</Type></CreatePartition>
-            <CreatePartition wcm:action="add"><Order>3</Order><Size>128</Size><Type>MSR</Type></CreatePartition>
-            <CreatePartition wcm:action="add"><Order>4</Order><Extend>true</Extend><Type>Primary</Type></CreatePartition>
-          </CreatePartitions>
-          <ModifyPartitions>
-            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Label>Recovery</Label><Format>NTFS</Format><TypeID>de94bba4-06d1-4d40-a16a-bfd50179d6ac</TypeID></ModifyPartition>
-            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID><Label>System</Label><Format>FAT32</Format></ModifyPartition>
-            <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID></ModifyPartition>
-            <ModifyPartition wcm:action="add"><Order>4</Order><PartitionID>4</PartitionID><Format>NTFS</Format></ModifyPartition>
-          </ModifyPartitions>
-          <DiskID>0</DiskID>
-          <WillWipeDisk>true</WillWipeDisk>
-        </Disk>
-        <WillShowUI>OnError</WillShowUI>
-      </DiskConfiguration>
-      <UserData>
-        <AcceptEula>true</AcceptEula>
-        <ProductKey>
-          <WillShowUI>Never</WillShowUI>
-        </ProductKey>
-      </UserData>
-      <ImageInstall>
-        <OSImage>
-          <InstallTo>
-            <DiskID>0</DiskID>
-            <PartitionID>4</PartitionID>
-          </InstallTo>
-          <WillShowUI>OnError</WillShowUI>
-          <InstallToAvailablePartition>false</InstallToAvailablePartition>
-          <InstallFrom>
-            <MetaData wcm:action="add">
-              <Key>/IMAGE/INDEX</Key>
-              <Value>4</Value>
-            </MetaData>
-          </InstallFrom>
-        </OSImage>
-      </ImageInstall>
-    </component>
 
-    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+  <!-- WINDOWSPE PASS: locale + create EFI, MSR, OS partitions -->
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
       <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
       <InputLocale>en-US</InputLocale>
       <SystemLocale>en-US</SystemLocale>
       <UILanguage>en-US</UILanguage>
-      <UILanguageFallback>en-US</UILanguageFallback>
       <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <!-- EFI -->
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>100</Size>
+            </CreatePartition>
+            <!-- MSR -->
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <!-- Windows -->
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <!-- Format EFI -->
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Format>FAT32</Format>
+              <Label>System</Label>
+            </ModifyPartition>
+            <!-- Format Windows -->
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>3</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Windows</Label>
+            </ModifyPartition>
+          </ModifyPartitions>
+          <WillShowUI>OnError</WillShowUI>
+        </Disk>
+      </DiskConfiguration>
+
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+      </UserData>
+
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>4</Value>    <!-- or change to your desired index -->
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
     </component>
   </settings>
 
+  <!-- SPECIALIZE PASS: join domain -->
   <settings pass="specialize">
-    <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+    <component name="Microsoft-Windows-UnattendedJoin"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
       <Identification>
         <Credentials>
-          <Domain>${DomainName}</Domain>
-          <Username>${DomainUser}</Username>
+          <Domain>__DOMAIN__</Domain>
+          <Username>__USER__</Username>
           <Password>Cyberark1</Password>
         </Credentials>
-        <JoinDomain>${DomainName}</JoinDomain>
+        <JoinDomain>__DOMAIN__</JoinDomain>
       </Identification>
     </component>
   </settings>
 
+  <!-- OOBE PASS: auto-logon -->
   <settings pass="oobeSystem">
-    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <UserAccounts>
-        <AdministratorPassword>
-          <Value>Cyberark1</Value>
-          <PlainText>true</PlainText>
-        </AdministratorPassword>
-      </UserAccounts>
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
       <AutoLogon>
         <Enabled>true</Enabled>
         <Username>Administrator</Username>
@@ -138,12 +172,17 @@ $xml = @'
       </AutoLogon>
     </component>
   </settings>
+
 </unattend>
 '@
 
-# Write it out ASCII, no BOM
-Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $xml -Encoding ASCII
-Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
+# inject your domain & user
+$autounattend = $xmlTemplate `
+  -replace '__DOMAIN__', [Regex]::Escape($DomainName) `
+  -replace '__USER__',   [Regex]::Escape($DomainUser)
+
+Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $autounattend -Encoding ASCII
+Write-Host "-> Autounattend.xml generated (fixed DiskConfiguration)." -ForegroundColor Green
 
 ### 4) Write minimal netmap.conf ###
 $wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
