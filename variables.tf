@@ -9,8 +9,13 @@ variable "vmrest_password" {
   type        = string
 }
 
-variable "base_vm_id" {
-  description = "ID of an existing VM to clone"
+variable "vault_image_id" {
+  description = "ID of the golden Vault image to clone"
+  type        = string
+}
+
+variable "app_image_id" {
+  description = "ID of the golden image for PVWA/CPM/PSM clones (if different)"
   type        = string
 }
 
