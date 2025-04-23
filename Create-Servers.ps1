@@ -54,7 +54,7 @@ $UnattendXml | Set-Content -Path (Join-Path $PSScriptRoot 'Autounattend.xml') -E
 Write-Host 'Autounattend.xml generated.' -ForegroundColor Green
 
 #--- 3) Ensure Packer & Terraform are installed
-$tools = @{ packer='HashiCorp.Packer'; terraform='HashiCorp.Terraform' }
+$tools = @{ packer = 'HashiCorp.Packer'; terraform = 'HashiCorp.Terraform' }
 foreach ($tool in $tools.Keys) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
         Write-Host "Installing $tool via winget..." -ForegroundColor Yellow
