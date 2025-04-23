@@ -51,7 +51,7 @@ $xmlTemplate = @'
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
 
-  <!-- WINDOWSPE PASS: locale + image selection + install target -->
+  <!-- windowsPE PASS: locale, image selection, auto partition -->
   <settings pass="windowsPE">
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
@@ -88,7 +88,7 @@ $xmlTemplate = @'
     </component>
   </settings>
 
-  <!-- SPECIALIZE PASS: domain join -->
+  <!-- specialize PASS: domain join -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-UnattendedJoin"
                processorArchitecture="amd64"
@@ -106,7 +106,7 @@ $xmlTemplate = @'
     </component>
   </settings>
 
-  <!-- OOBE PASS: skip EULA & auto-logon -->
+  <!-- oobeSystem PASS: skip EULA & auto-logon -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-International-Core"
                processorArchitecture="amd64"
