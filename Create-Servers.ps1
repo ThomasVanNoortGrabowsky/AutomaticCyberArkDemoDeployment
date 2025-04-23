@@ -1,32 +1,31 @@
 <#
 .SYNOPSIS
-  Build and deploy CyberArk servers via Packer and Terraform on VMware Workstation.
+  Build and deploy CyberArk servers (Vault + PVWA/CPM/PSM) on VMware Workstation using Packer and Terraform.
 
 .DESCRIPTION
-  1. Prompts for ISO path, vmrest API credentials, Vault inclusion, deploy path, and domain details.
+  1. Prompts for ISO path, REST-API credentials, Vault inclusion, deploy path, and domain join info.
   2. Generates Autounattend.xml for unattended Windows install with domain join.
-  3. Installs Packer and Terraform via winget if missing.
+  3. Installs Packer & Terraform via winget if missing.
   4. Builds a golden "vault-base" VM image using Packer.
-  5. Retrieves the new VM's ID from the Workstation REST API using Basic auth.
+  5. Restarts vmrest daemon and retrieves the VM ID via Basic auth.
   6. Generates Terraform configs (main.tf, variables.tf) and applies them to clone Vault (optional) plus PVWA/CPM/PSM.
 #>
 
 #--- 1) Prompt for inputs
-$IsoPath = Read-Host 'Enter Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)'
-$VmrestUser = Read-Host 'VMware REST API user [default: vmrest]'
-if ([string]::IsNullOrWhiteSpace($VmrestUser)) { $VmrestUser = 'vmrest' }
-$VmrestSecure = Read-Host 'VMware REST API password' -AsSecureString
+$IsoPath        = Read-Host 'Enter Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)'
+$VmrestUser     = Read-Host 'Enter VMware REST API username'
+$VmrestSecure   = Read-Host 'Enter VMware REST API password' -AsSecureString
 $VmrestPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
     [Runtime.InteropServices.Marshal]::SecureStringToBSTR($VmrestSecure)
 )
-$InstallVault = (Read-Host 'Install Vault server? (Y/N)') -match '^[Yy]$'
-$DeployPath = Read-Host 'Enter base folder path for VMs (e.g. C:\VMs)'
-$DomainName = Read-Host 'Enter domain to join (e.g. corp.local)'
-$DomainUser = Read-Host 'Enter domain join user (e.g. joinuser)'
-$DomainPass = 'Cyberark1'
+$InstallVault   = (Read-Host 'Install Vault server? (Y/N)') -match '^[Yy]$'
+$DeployPath     = Read-Host 'Enter base folder path for VMs (e.g. C:\VMs)'
+$DomainName     = Read-Host 'Enter domain to join (e.g. corp.local)'
+$DomainUser     = Read-Host 'Enter domain join user (e.g. joinuser)'
+$DomainPass     = 'Cyberark1'
 
 #--- 2) Generate Autounattend.xml
-$Unattend = @"
+$UnattendXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
   <settings pass="windowsPE">
@@ -54,17 +53,17 @@ $Unattend = @"
   </settings>
 </unattend>
 "@
-$Unattend | Set-Content -Path (Join-Path $PSScriptRoot 'Autounattend.xml') -Encoding UTF8
+$UnattendXml | Set-Content -Path (Join-Path $PSScriptRoot 'Autounattend.xml') -Encoding UTF8
 Write-Host 'Autounattend.xml generated.' -ForegroundColor Green
 
 #--- 3) Ensure Packer & Terraform are installed
 $tools = @{ packer = 'HashiCorp.Packer'; terraform = 'HashiCorp.Terraform' }
-foreach ($tool in $tools.Keys) {
-  if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-    Write-Host "Installing $tool via winget..." -ForegroundColor Yellow
-    Start-Process winget -ArgumentList 'install','--id',$tools[$tool],'-e','--accept-package-agreements','--accept-source-agreements' -NoNewWindow -Wait
+foreach ($t in $tools.Keys) {
+  if (-not (Get-Command $t -ErrorAction SilentlyContinue)) {
+    Write-Host "Installing $t via winget..." -ForegroundColor Yellow
+    Start-Process winget -ArgumentList 'install','--id',$tools[$t],'-e','--accept-package-agreements','--accept-source-agreements' -NoNewWindow -Wait
     $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
-    Write-Host "$tool installed." -ForegroundColor Green
+    Write-Host "$t installed." -ForegroundColor Green
   }
 }
 
@@ -72,9 +71,9 @@ foreach ($tool in $tools.Keys) {
 Write-Host 'Calculating ISO checksum...' -ForegroundColor Cyan
 $IsoHash = (Get-FileHash -Path $IsoPath -Algorithm SHA256).Hash
 
-#--- 5) Write Packer HCL template
+#--- 5) Write Packer template
 $HclIso = $IsoPath -replace '\\','/'
-$Pkr = @"
+$PkrHcl = @"
 variable "iso_path" { default = "$HclIso" }
 source "vmware-iso" "vault_base" {
   vm_name           = "vault-base"
@@ -92,35 +91,41 @@ source "vmware-iso" "vault_base" {
 }
 build { sources = ["source.vmware-iso.vault_base"] }
 "@
-$Pkr | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
+$PkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
 Write-Host 'Packer HCL template written.' -ForegroundColor Green
 
-#--- 6) Build golden image via Packer
+#--- 6) Build golden VM image
 Write-Host 'Running Packer build...' -ForegroundColor Cyan
 & packer init template.pkr.hcl | Out-Null
 & packer build -force template.pkr.hcl | Out-Null
 
-#--- 7) Retrieve golden VM ID via Basic auth header
-$url    = 'http://127.0.0.1:8697/api/vms'
-$pair   = "$VmrestUser`:$VmrestPassword"
-$bytes  = [System.Text.Encoding]::ASCII.GetBytes($pair)
-$token  = [Convert]::ToBase64String($bytes)
-$headers = @{ Authorization = "Basic $token" }
+#--- 7) Restart vmrest and retrieve VM ID via Basic auth
+$vmrestExe = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe'
+if (-not (Test-Path $vmrestExe)) { Write-Error "vmrest.exe not found at $vmrestExe"; exit 1 }
+# stop existing and restart
+Get-Process vmrest -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath $vmrestExe -ArgumentList '-b' -WindowStyle Hidden
 Start-Sleep -Seconds 5
+
+$url     = 'http://127.0.0.1:8697/api/vms'
+$pair    = "${VmrestUser}:${VmrestPassword}"
+$token   = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
+$headers = @{ Authorization = "Basic $token" }
+
 try {
-  $VMs = Invoke-RestMethod -Uri $url -Headers $headers
+  $VMs    = Invoke-RestMethod -Uri $url -Headers $headers
+  $BaseId = ($VMs | Where-Object name -eq 'vault-base').id
+  Write-Host "Golden VM ID: $BaseId" -ForegroundColor Green
 } catch {
-  Write-Error "Authentication to vmrest failed. Please check your credentials."
+  Write-Error "Authentication to vmrest failed. Please re-run 'vmrest.exe --config' and ensure the service is running."
   exit 1
 }
-$BaseId = ($VMs | Where-Object name -eq 'vault-base').id
-Write-Host "Golden VM ID: $BaseId" -ForegroundColor Green
 
-#--- 8) Generate Terraform project
+#--- 8) Generate Terraform config
 $tfDir = Join-Path $PSScriptRoot 'terraform'
 if (-not (Test-Path $tfDir)) { New-Item -Path $tfDir -ItemType Directory | Out-Null }
 
-$MainTf = @"
+$mainTf = @"
 terraform {
   required_providers {
     vmworkstation = {
@@ -137,7 +142,7 @@ provider "vmworkstation" {
 }
 "@
 if ($InstallVault) {
-  $MainTf += @"
+  $mainTf += @"
 resource "vmworkstation_vm" "vault" {
   sourceid     = "$BaseId"
   denomination = "CyberArk-Vault"
@@ -148,7 +153,7 @@ resource "vmworkstation_vm" "vault" {
 "@
 }
 foreach ($comp in @('PVWA','CPM','PSM')) {
-  $MainTf += @"
+  $mainTf += @"
 resource "vmworkstation_vm" "${comp.ToLower()}" {
   sourceid     = "$BaseId"
   denomination = "CyberArk-$comp"
@@ -158,19 +163,21 @@ resource "vmworkstation_vm" "${comp.ToLower()}" {
 }
 "@
 }
-$MainTf | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
+$mainTf | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
 
-$VarsTf = @"
+$varsTf = @"
 variable "vmrest_user" {
+  type    = string
   default = "$VmrestUser"
 }
 variable "vmrest_password" {
+  type    = string
   default = "$VmrestPassword"
 }
 "@
-$VarsTf | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
+$varsTf | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
 
-#--- 9) Deploy via Terraform
+#--- 9) Run Terraform\ Write-Host 'Deploying via Terraform...' -ForegroundColor Cyan
 Push-Location $tfDir
 terraform init -upgrade | Out-Null
 terraform plan -out=tfplan
