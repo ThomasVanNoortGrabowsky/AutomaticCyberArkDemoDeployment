@@ -1,9 +1,9 @@
 <#
   Create-Servers.ps1
   -------------------
-  Automated CyberArk lab:
-    1. Unattended ISO → Packer golden image
-    2. vmrest-backed Terraform clones of Vault (optional) + PVWA/CPM/PSM
+  Automated CyberArk lab deployment:
+    1) Unattended Windows Server ISO → Packer golden image
+    2) vmrest-backed Terraform clones of Vault (optional) + PVWA/CPM/PSM
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -78,10 +78,8 @@ $xmlTemplate = @'
               <Value>Windows Server 2022 SERVERSTANDARDCORE</Value>
             </MetaData>
           </InstallFrom>
-          <InstallTo>
-            <DiskID>0</DiskID>
-            <PartitionID>1</PartitionID>
-          </InstallTo>
+          <InstallToAvailablePartition>true</InstallToAvailablePartition>
+          <WillShowUI>OnError</WillShowUI>
         </OSImage>
       </ImageInstall>
       <UserData>
@@ -173,7 +171,7 @@ foreach ($f in $paths) {
     Write-Host "-> netmap.conf written to $f" -ForegroundColor Green
 }
 
-### 5) Generate Packer HCL template ###
+### 5) Generate Packer HCL ###
 $hclIso   = $IsoPath.Replace('\','/')
 $checksum = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
 $packerHcl = @"
@@ -221,7 +219,7 @@ try {
 $BaseId = ($vms | Where-Object name -eq 'vault_base').id
 Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
 
-### 8) Generate & apply Terraform project ###
+### 8) Generate & apply Terraform configs ###
 $tfDir = Join-Path $PSScriptRoot 'terraform'
 if (Test-Path $tfDir) { Remove-Item $tfDir -Recurse -Force }
 New-Item -Path $tfDir -ItemType Directory | Out-Null
