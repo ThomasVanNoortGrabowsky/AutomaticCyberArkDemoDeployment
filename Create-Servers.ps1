@@ -96,32 +96,34 @@ $tfDir = Join-Path $PSScriptRoot 'terraform'
 if (Test-Path $tfDir) { Remove-Item $tfDir -Recurse -Force }
 New-Item -ItemType Directory -Path $tfDir | Out-Null
 
-# Build main.tf content dynamically
-$tfMain = "terraform {
+# Build main.tf content using a here-string
+$tfMain = @"
+terraform {
   required_providers {
     vmworkstation = {
-      source  = \"elsudano/vmworkstation\"
-      version = \">= 1.0.4\"
+      source  = "elsudano/vmworkstation"
+      version = ">= 1.0.4"
     }
   }
 }
 
-provider \"vmworkstation\" {
+provider "vmworkstation" {
   user     = var.vmrest_user
   password = var.vmrest_password
-  url      = \"http://127.0.0.1:8697/api\"
+  url      = "http://127.0.0.1:8697/api"
 }
-"
+"@
 
+# Optionally include Vault server
 if ($InstallVault) {
   $tfMain += @"
-resource \"vmworkstation_vm\" \"vault\" {
-  sourceid     = \"$baseId\"
-  denomination = \"CyberArk-Vault\"
-  description  = \"Vault server (8 CPU, 32 GB RAM, 2×80 GB)\"
+resource "vmworkstation_vm" "vault" {
+  sourceid     = "$baseId"
+  denomination = "CyberArk-Vault"
+  description  = "Vault server (8 CPU, 32 GB RAM, 2×80 GB)"
   processors   = 8
   memory       = 32768
-  path         = \"${DeployPath}\CyberArk-Vault\"
+  path         = "${DeployPath}\CyberArk-Vault"
 }
 "@
 }
@@ -130,13 +132,13 @@ resource \"vmworkstation_vm\" \"vault\" {
 $components = @("PVWA","CPM","PSM")
 foreach ($comp in $components) {
   $tfMain += @"
-resource \"vmworkstation_vm\" \"$($comp.ToLower())\" {
-  sourceid     = \"$baseId\"
-  denomination = \"CyberArk-$comp\"
-  description  = \"$comp server (4 CPU, 8 GB RAM, 2×80 GB)\"
+resource "vmworkstation_vm" "${comp.ToLower()}" {
+  sourceid     = "$baseId"
+  denomination = "CyberArk-$comp"
+  description  = "$comp server (4 CPU, 8 GB RAM, 2×80 GB)"
   processors   = 4
   memory       = 8192
-  path         = \"${DeployPath}\CyberArk-$comp\"
+  path         = "${DeployPath}\CyberArk-$comp"
 }
 "@
 }
@@ -145,13 +147,13 @@ resource \"vmworkstation_vm\" \"$($comp.ToLower())\" {
 $tfMain | Set-Content -Path (Join-Path $tfDir 'main.tf') -Encoding UTF8
 
 $tfVars = @"
-variable \"vmrest_user\" {
+variable "vmrest_user" {
   type    = string
-  default = \"$VmrestUser\"
+  default = "$VmrestUser"
 }
-variable \"vmrest_password\" {
+variable "vmrest_password" {
   type    = string
-  default = \"$VmrestPassword\"
+  default = "$VmrestPassword"
 }
 "@
 $tfVars | Set-Content -Path (Join-Path $tfDir 'variables.tf') -Encoding UTF8
