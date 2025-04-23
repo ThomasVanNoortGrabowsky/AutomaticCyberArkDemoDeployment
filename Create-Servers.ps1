@@ -114,7 +114,7 @@ build { sources = ["source.vmware-iso.vault_base"] }
 "@
 # write template as UTF8
 $pkrHcl | Set-Content -Path (Join-Path $PSScriptRoot 'template.pkr.hcl') -Encoding UTF8
-Write-Host '-> Packer template written.' -ForegroundColor Green -ForegroundColor Green
+Write-Host '-> Packer template written.' -ForegroundColor Green
 
 #--- 6) Run Packer build
 Write-Host '-> Running Packer init & build...' -ForegroundColor Cyan
