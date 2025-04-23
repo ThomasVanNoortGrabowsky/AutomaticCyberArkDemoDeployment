@@ -32,36 +32,29 @@ $DeployPath = Read-Host 'Enter the base folder path where VMs should be deployed
 #endregion
 
 #--- 1) prerequisites
-# Ensure Packer is installed
+# Ensure Packer is installed (download if needed)
 if (-not (Get-Command packer -ErrorAction SilentlyContinue)) {
-    Write-Host "Packer not found. Installing via winget..." -ForegroundColor Yellow
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Start-Process winget -ArgumentList @(
-            'install',
-            '--id','HashiCorp.Packer',
-            '-e',
-            '--source','winget',
-            '--accept-package-agreements',
-            '--accept-source-agreements'
-        ) -NoNewWindow -Wait
-        # Refresh PATH
-        $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
-    } else {
-        Write-Error "winget not available to install Packer; please install Packer manually."
-        exit 1
-    }
+    Write-Host "Packer not found. Downloading Packer..." -ForegroundColor Yellow
+    $packerVersion = '1.8.6'                # adjust as needed
+    $zipPath       = "$env:TEMP\packer_$packerVersion.zip"
+    $downloadUrl   = "https://releases.hashicorp.com/packer/$packerVersion/packer_${packerVersion}_windows_amd64.zip"
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath
+    $packerDir = Join-Path $PSScriptRoot 'packer-bin'
+    if (-not (Test-Path $packerDir)) { New-Item -ItemType Directory -Path $packerDir | Out-Null }
+    Expand-Archive -Path $zipPath -DestinationPath $packerDir -Force
+    Remove-Item $zipPath
+    # Add to PATH for this session
+    $env:PATH = "$packerDir;$env:PATH"
+    Write-Host "Packer downloaded to $packerDir and added to PATH." -ForegroundColor Green
 }
-# Ensure Terraform is installed
+
+# Ensure Terraform is installed (via winget)
 if (-not (Get-Command terraform -ErrorAction SilentlyContinue)) {
     Write-Host "Terraform not found. Installing via winget..." -ForegroundColor Yellow
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         Start-Process winget -ArgumentList @(
-            'install',
-            '--id','HashiCorp.Terraform',
-            '-e',
-            '--source','winget',
-            '--accept-package-agreements',
-            '--accept-source-agreements'
+            'install','--id','HashiCorp.Terraform','-e','--source','winget',
+            '--accept-package-agreements','--accept-source-agreements'
         ) -NoNewWindow -Wait
         # Refresh PATH
         $env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
