@@ -1,18 +1,16 @@
 # Create-Servers.ps1
-# -------------------
-# Automated CyberArk lab:
-#   Unattended ISO → Packer golden image → Terraform clones
+# Automated CyberArk lab: Unattended ISO → Packer golden image → Terraform clones
 
 $ErrorActionPreference = 'Stop'
 
-# 0) Elevate to Administrator
+### 0) Elevate to Administrator if needed ###
 if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
     ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   Start-Process pwsh "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
   exit
 }
 
-# 1) Download Packer locally if missing
+### 1) Download Packer locally if missing ###
 $packerVersion = "1.11.4"
 $installDir    = Join-Path $PSScriptRoot "packer-bin"
 $packerExe     = Join-Path $installDir "packer.exe"
@@ -28,8 +26,11 @@ if (-not (Test-Path $packerExe)) {
   Write-Host "-> Packer installed at $installDir" -ForegroundColor Green
 }
 
-# 2) Prompt for inputs
+### 2) Prompt for inputs ###
 $IsoPath        = Read-Host "1) Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)"
+if (-not (Test-Path $IsoPath -PathType Leaf)) {
+  Write-Error "ISO not found at '$IsoPath'" ; exit 1
+}
 $VmrestUser     = Read-Host "2) vmrest API username"
 $VmrestSecure   = Read-Host "3) vmrest API password" -AsSecureString
 $VmrestPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
@@ -40,7 +41,7 @@ $DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
 $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
-# 3) Write Autounattend.xml (including WinPE skip-language settings)
+### 3) Write Autounattend.xml (skip language/keyboard) ###
 $autoXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
@@ -115,15 +116,15 @@ $autoXml = @"
 $autoXml | Set-Content "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
 Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
-# 4) Fallback netmap.conf
+### 4) Fallback netmap.conf ###
 $wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
 $programData = Join-Path $env:ProgramData 'VMware'
-@(
-  Join-Path $wsDir       'netmap.conf'
-  Join-Path $programData 'netmap.conf'
-) | ForEach-Object {
-  $dir = Split-Path $_ -Parent
-  if (-not (Test-Path $dir)) { New-Item $dir -ItemType Directory -Force | Out-Null }
+foreach ($dest in @(
+    Join-Path $wsDir 'netmap.conf',
+    Join-Path $programData 'netmap.conf'
+)) {
+  $d = Split-Path $dest -Parent
+  if (-not (Test-Path $d)) { New-Item $d -ItemType Directory -Force | Out-Null }
   @"
 # Minimal netmap.conf for Packer
 network0.name   = "Bridged"
@@ -132,44 +133,47 @@ network1.name   = "HostOnly"
 network1.device = "vmnet1"
 network8.name   = "NAT"
 network8.device = "vmnet8"
-"@ | Set-Content $_ -Encoding ASCII
-  Write-Host "-> netmap.conf written to $_" -ForegroundColor Green
+"@ | Set-Content $dest -Encoding ASCII
+  Write-Host "-> netmap.conf written to $dest" -ForegroundColor Green
 }
 
-# 5) Build Packer HCL template (inline iso_url/checksum)
+### 5) Generate Packer HCL ###
+# convert ISO path to forward-slashes and prefix file:/// 
 $hclIso   = $IsoPath.Replace('\','/')
 $checksum = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
-$lines = @(
-  'source "vmware-iso" "vault_base" {'
-  "  iso_url           = `"file:///$hclIso`""
-  "  iso_checksum      = `"sha256:$checksum`""
-  '  network           = "nat"'
-  '  communicator      = "winrm"'
-  '  winrm_username    = "Administrator"'
-  '  winrm_password    = "Cyberark1"'
-  '  floppy_files      = ["Autounattend.xml"]'
-  '  cd_files          = ["Autounattend.xml"]'
-  '  disk_size         = 81920'
-  '  cpus              = 8'
-  '  memory            = 32768'
-  '  shutdown_command  = "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\""' 
-  '}'
-  ''
-  'build {'
-  '  sources = ["source.vmware-iso.vault_base"]'
-  '}'
-)
-$lines -join "`n" | Set-Content "$PSScriptRoot\template.pkr.hcl" -Encoding ASCII
+
+$packerHcl = @"
+source "vmware-iso" "vault_base" {
+  iso_url          = "file:///$hclIso"
+  iso_checksum     = "sha256:$checksum"
+  network          = "nat"
+  communicator     = "winrm"
+  winrm_username   = "Administrator"
+  winrm_password   = "Cyberark1"
+  floppy_files     = ["Autounattend.xml"]
+  cd_files         = ["Autounattend.xml"]
+  disk_size        = 81920
+  cpus             = 8
+  memory           = 32768
+  shutdown_command = "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\""
+}
+
+build {
+  sources = ["source.vmware-iso.vault_base"]
+}
+"@
+
+$packerHcl | Set-Content "$PSScriptRoot\template.pkr.hcl" -Encoding ASCII
 Write-Host "-> Packer template written." -ForegroundColor Green
 
-# 6) Run Packer
+### 6) Run Packer ###
 Write-Host "-> Running Packer init & build…" -ForegroundColor Cyan
 & $packerExe init "$PSScriptRoot\template.pkr.hcl" 2>&1 | Write-Host
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed"; exit 1 }
 & $packerExe build -force "$PSScriptRoot\template.pkr.hcl" 2>&1 | Write-Host
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed"; exit 1 }
 
-# 7) Restart vmrest & get golden VM ID
+### 7) Restart vmrest + fetch golden VM ID ###
 Stop-Process -Name vmrest -Force -ErrorAction SilentlyContinue
 Start-Process "$wsDir\vmrest.exe" -ArgumentList "-b" -WindowStyle Hidden
 Start-Sleep 5
@@ -184,7 +188,7 @@ try {
 $BaseId = ($VMs | Where-Object name -eq 'vault_base').id
 Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
 
-# 8) Generate & apply Terraform configs
+### 8) Generate & apply Terraform configs ###
 $tfDir = Join-Path $PSScriptRoot 'terraform'
 if (Test-Path $tfDir) { Remove-Item $tfDir -Recurse -Force }
 New-Item $tfDir -ItemType Directory | Out-Null
@@ -234,7 +238,7 @@ variable "vmrest_password" { default = "$VmrestPassword" }
 
 Push-Location $tfDir
 terraform init -upgrade | Write-Host
-terraform plan -out=tfplan | Write-Host
+terraform plan -out=tfplan   | Write-Host
 terraform apply -auto-approve tfplan | Write-Host
 Pop-Location
 
