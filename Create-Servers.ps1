@@ -3,29 +3,34 @@
 
 $ErrorActionPreference = 'Stop'
 
+#
 # 0) Elevate to Administrator
-if (-not ([Security.Principal.WindowsPrincipal] `
-        [Security.Principal.WindowsIdentity]::GetCurrent() `
-        ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process powershell `
-        "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" `
-        -Verb RunAs
-    exit
+#
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+  Start-Process powershell `
+    "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" `
+    -Verb RunAs
+  exit
 }
 
-# 1) User prompts
-$IsoPath        = Read-Host    "1) Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)"
-$VmrestUser     = Read-Host    "2) VMware REST API username"
-$VmrestSecure   = Read-Host    "3) VMware REST API password" -AsSecureString
+#
+# 1) Prompt for all needed variables
+#
+$IsoPath        = Read-Host "1) Windows Server ISO path (e.g. C:\ISOs\SERVER_EVAL.iso)"
+$VmrestUser     = Read-Host "2) VMware REST API username"
+$VmrestSecure   = Read-Host "3) VMware REST API password" -AsSecureString
 $VmrestPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($VmrestSecure)
+  [Runtime.InteropServices.Marshal]::SecureStringToBSTR($VmrestSecure)
 )
 $InstallVault   = (Read-Host "4) Install Vault server? (Y/N)").ToUpper() -eq 'Y'
-$DeployPath     = Read-Host    "5) Base folder for VMs (e.g. C:\VMs)"
-$DomainName     = Read-Host    "6) Domain to join (e.g. corp.local)"
-$DomainUser     = Read-Host    "7) Domain join user"
+$DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
+$DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
+$DomainUser     = Read-Host "7) Domain join user (with rights to add machines)"
 
-# 2) Generate Autounattend.xml
+#
+# 2) Generate Autounattend.xml for unattended install + domain join
+#
 $autoXml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
@@ -62,12 +67,6 @@ $autoXml = @"
     </component>
   </settings>
   <settings pass="oobeSystem">
-    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <InputLocale>en-US</InputLocale>
-      <SystemLocale>en-US</SystemLocale>
-      <UILanguage>en-US</UILanguage>
-      <UserLocale>en-US</UserLocale>
-    </component>
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <OOBE>
         <HideEULAPage>true</HideEULAPage>
@@ -90,22 +89,43 @@ $autoXml = @"
 $autoXml | Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Encoding ASCII
 Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
 
-# 3) Ensure netmap.conf for Packer
-$sourceNetmap = Join-Path $env:ProgramData 'VMware\netmap.conf'
-$wsDir        = 'C:\Program Files (x86)\VMware\VMware Workstation'
-$destNetmap   = Join-Path $wsDir 'netmap.conf'
+#
+# 3) Regenerate netmap.conf via vnetlib64.exe (no GUI needed)
+#
+$wsDir      = 'C:\Program Files (x86)\VMware\VMware Workstation'
+$vnetTool   = Join-Path $wsDir 'vnetlib64.exe'    # if using 32-bit, change to 'vnetlib.exe'
+$exportFile = Join-Path $env:TEMP 'vnetconfig.txt'
 
-if (-not (Test-Path $destNetmap)) {
-    if (Test-Path $sourceNetmap) {
-        Copy-Item -Path $sourceNetmap -Destination $destNetmap -Force
-        Write-Host "-> Copied netmap.conf for Packer." -ForegroundColor Green
-    } else {
-        Write-Error "netmap.conf not found at $sourceNetmap. Run Virtual Network Editor once to regenerate it."
-        exit 1
-    }
+if (-not (Test-Path $vnetTool)) {
+  Write-Error "vnetlib64.exe not found at $vnetTool; install VMware Workstation correctly."
+  exit 1
 }
 
-# 4) Write Packer template
+Write-Host "-> Exporting VMware network settings…" -ForegroundColor Cyan
+& $vnetTool --export $exportFile
+if ($LASTEXITCODE -ne 0) {
+  Write-Error "vnetlib export failed (code $LASTEXITCODE)"
+  exit 1
+}
+
+Write-Host "-> Importing network settings, regenerating netmap.conf…" -ForegroundColor Cyan
+& $vnetTool --import $exportFile
+if ($LASTEXITCODE -ne 0) {
+  Write-Error "vnetlib import failed (code $LASTEXITCODE)"
+  exit 1
+}
+
+$destNetmap = Join-Path $wsDir 'netmap.conf'
+if (Test-Path $destNetmap) {
+  Write-Host "-> netmap.conf successfully regenerated." -ForegroundColor Green
+} else {
+  Write-Error "netmap.conf still missing after import!"
+  exit 1
+}
+
+#
+# 4) Write the Packer HCL template
+#
 $hclIsoPath = $IsoPath.Replace('\','/')
 $hash       = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
 
@@ -130,34 +150,42 @@ build {
 Set-Content -Path "$PSScriptRoot\template.pkr.hcl" -Value $packerHcl -Encoding ASCII
 Write-Host "-> Packer template written." -ForegroundColor Green
 
+#
 # 5) Run Packer
+#
 Write-Host "-> Running Packer init & build..." -ForegroundColor Cyan
 & packer init "$PSScriptRoot\template.pkr.hcl" 2>&1 | Write-Host
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed"; exit 1 }
 & packer build -force "$PSScriptRoot\template.pkr.hcl" 2>&1 | Write-Host
 if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed"; exit 1 }
 
+#
 # 6) Restart vmrest daemon
+#
 Stop-Process -Name vmrest -ErrorAction SilentlyContinue -Force
 Start-Process "$wsDir\vmrest.exe" -ArgumentList "-b" -WindowStyle Hidden
 Start-Sleep -Seconds 5
 
-# 7) Fetch golden VM ID via Basic auth
+#
+# 7) Fetch golden VM ID via Basic-auth
+#
 $url    = 'http://127.0.0.1:8697/api/vms'
 $pair   = $VmrestUser + ':' + $VmrestPassword
 $token  = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
 $headers = @{ Authorization = "Basic $token" }
 
 try {
-    $VMs = Invoke-RestMethod -Uri $url -Headers $headers
+  $VMs = Invoke-RestMethod -Uri $url -Headers $headers
 } catch {
-    Write-Error "Authentication to vmrest failed!"; exit 1
+  Write-Error "Authentication to vmrest failed!"; exit 1
 }
 
 $BaseId = ($VMs | Where-Object name -eq 'vault_base').id
 Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
 
-# 8) Generate Terraform configs
+#
+# 8) Generate Terraform project
+#
 $tfDir = Join-Path $PSScriptRoot 'terraform'
 if (Test-Path $tfDir) { Remove-Item $tfDir -Recurse -Force }
 New-Item -Path $tfDir -ItemType Directory | Out-Null
@@ -182,7 +210,7 @@ provider "vmworkstation" {
 "@
 
 if ($InstallVault) {
-    $main += @"
+  $main += @"
 resource "vmworkstation_vm" "vault" {
   sourceid     = "$BaseId"
   denomination = "CyberArk-Vault"
@@ -194,8 +222,8 @@ resource "vmworkstation_vm" "vault" {
 }
 
 foreach ($c in 'PVWA','CPM','PSM') {
-    $lower = $c.ToLower()
-    $main += @"
+  $lower = $c.ToLower()
+  $main += @"
 resource "vmworkstation_vm" "$lower" {
   sourceid     = "$BaseId"
   denomination = "CyberArk-$c"
@@ -220,7 +248,9 @@ variable "vmrest_password" {
 
 Set-Content -Path (Join-Path $tfDir 'variables.tf') -Value $vars -Encoding ASCII
 
-# 9) Terraform deploy
+#
+# 9) Deploy with Terraform
+#
 Push-Location $tfDir
 terraform init -upgrade | Write-Host
 terraform plan -out=tfplan | Write-Host
