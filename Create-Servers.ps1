@@ -24,9 +24,7 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 # 1) Clone or update packer-Win2022 templates
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-  Write-Error 'Git is required but not found. Please install Git.'; exit 1
-}
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Write-Error 'Git required.'; exit 1 }
 $packerDir = Join-Path $scriptRoot 'packer-Win2022'
 if (Test-Path $packerDir) {
   Write-Host 'Updating packer-Win2022 templates...' -ForegroundColor Cyan
@@ -37,7 +35,8 @@ if (Test-Path $packerDir) {
 }
 
 # 2) Ensure Packer v1.11.2 installed locally
-$packerBin = Join-Path $scriptRoot 'packer-bin'; $packerExe = Join-Path $packerBin 'packer.exe'
+$packerBin = Join-Path $scriptRoot 'packer-bin'
+$packerExe = Join-Path $packerBin 'packer.exe'
 if (-not (Test-Path $packerExe)) {
   Write-Host 'Downloading Packer v1.11.2...' -ForegroundColor Cyan
   New-Item -Path $packerBin -ItemType Directory -Force | Out-Null
@@ -50,9 +49,7 @@ if (-not (Test-Path $packerExe)) {
 $env:PATH = "$packerBin;$env:PATH"
 
 # 3) Validate local ISO path
-if (-not (Test-Path $IsoPath)) {
-  Write-Error "ISO not found at path: $IsoPath"; exit 1
-}
+if (-not (Test-Path $IsoPath)) { Write-Error "ISO not found at path: $IsoPath"; exit 1 }
 $checksum       = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
 $isoUrlVar      = "file:///$($IsoPath.Replace('\','/'))"
 $isoChecksumVar = "sha256:$checksum"
@@ -60,9 +57,7 @@ $isoChecksumVar = "sha256:$checksum"
 # 4) Copy autounattend.xml
 $src  = Join-Path $packerDir "scripts\uefi\$GuiOrCore\autounattend.xml"
 $dest = Join-Path $scriptRoot 'Autounattend.xml'
-if (-not (Test-Path $src)) {
-  Write-Error "Template not found: $src"; exit 1
-}
+if (-not (Test-Path $src)) { Write-Error "Template not found: $src"; exit 1 }
 Copy-Item -Path $src -Destination $dest -Force
 Write-Host "Copied autounattend.xml for '$GuiOrCore' build to $dest" -ForegroundColor Green
 
