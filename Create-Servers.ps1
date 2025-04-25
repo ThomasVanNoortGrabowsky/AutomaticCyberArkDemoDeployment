@@ -8,7 +8,7 @@
     4) Copy official autounattend.xml for GUI/Core UEFI builds
     5) Install VMware Packer plugin
     6) Inject WinRM provisioner into Packer JSON via PowerShell objects
-    7) Build VM image via Packer (Workstation)
+    7) Clean previous Packer output and build VM image via Packer
     8) Post-build provisioning: vmrest & Terraform
 #>
 
@@ -83,7 +83,12 @@ $packerObj.provisioners = @($winrmProv) + $packerObj.provisioners
 $packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
 Write-Host 'Injected WinRM provisioner into Packer JSON.' -ForegroundColor Green
 
-# 7) Build VM image via Packer
+# 7) Clean previous output and Build VM image via Packer
+$outputDir = Join-Path $packerDir 'output-vmware-iso'
+if (Test-Path $outputDir) {
+  Write-Host "Removing existing output directory: $outputDir" -ForegroundColor Yellow
+  Remove-Item -Recurse -Force $outputDir
+}
 Write-Host "Building win2022-$GuiOrCore.json with WinRM provisioner..." -ForegroundColor Cyan
 & $packerExe build -only=vmware-iso -var "iso_url=$isoUrlVar" -var "iso_checksum=$isoChecksumVar" "win2022-$GuiOrCore.json"
 if ($LASTEXITCODE -ne 0) { Write-Error 'Packer build failed.'; Pop-Location; exit 1 }
