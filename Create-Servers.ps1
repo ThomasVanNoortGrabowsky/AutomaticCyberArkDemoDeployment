@@ -49,66 +49,117 @@ $xml = @'
 
   <!-- windowsPE PASS: DiskConfiguration (500+100+128+rest), EULA, image selection -->
   <settings pass="windowsPE">
-    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <DiskConfiguration>
-        <Disk wcm:action="add">
+  <component name="Microsoft-Windows-Setup"
+             processorArchitecture="amd64"
+             publicKeyToken="31bf3856ad364e35"
+             language="neutral"
+             versionScope="nonSxS"
+             xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+    <!-- 1. Disk setup: wipe disk and create 4 partitions -->
+    <DiskConfiguration>
+      <Disk wcm:action="add">
+        <DiskID>0</DiskID>
+        <WillWipeDisk>true</WillWipeDisk>
+        <CreatePartitions>
+          <CreatePartition wcm:action="add">
+            <Order>1</Order>
+            <Size>500</Size>
+            <Type>Primary</Type>
+          </CreatePartition>
+          <CreatePartition wcm:action="add">
+            <Order>2</Order>
+            <Size>100</Size>
+            <Type>EFI</Type>
+          </CreatePartition>
+          <CreatePartition wcm:action="add">
+            <Order>3</Order>
+            <Size>128</Size>
+            <Type>MSR</Type>
+          </CreatePartition>
+          <CreatePartition wcm:action="add">
+            <Order>4</Order>
+            <Extend>true</Extend>
+            <Type>Primary</Type>
+          </CreatePartition>
+        </CreatePartitions>
+        <ModifyPartitions>
+          <ModifyPartition wcm:action="add">
+            <Order>1</Order>
+            <PartitionID>1</PartitionID>
+            <Label>Recovery</Label>
+            <Format>NTFS</Format>
+            <TypeID>de94bba4-06d1-4d40-a16a-bfd50179d6ac</TypeID>
+          </ModifyPartition>
+          <ModifyPartition wcm:action="add">
+            <Order>2</Order>
+            <PartitionID>2</PartitionID>
+            <Label>System</Label>
+            <Format>FAT32</Format>
+          </ModifyPartition>
+          <ModifyPartition wcm:action="add">
+            <Order>3</Order>
+            <PartitionID>3</PartitionID>
+          </ModifyPartition>
+          <ModifyPartition wcm:action="add">
+            <Order>4</Order>
+            <PartitionID>4</PartitionID>
+            <Format>NTFS</Format>
+          </ModifyPartition>
+        </ModifyPartitions>
+        <WillShowUI>OnError</WillShowUI>
+      </Disk>
+    </DiskConfiguration>
+
+    <!-- 2. UserData: accept EULA and defer product-key prompt -->
+    <UserData>
+      <!-- Product Key from https://www.microsoft.com/en-us/evalcenter/ -->
+      <ProductKey>
+        <!-- Do not uncomment the Key element if you are using trial ISOs -->
+        <!-- You must uncomment the Key element (and optionally insert your own key) if using retail/volume ISOs -->
+        <!--<Key>ENTER-YOUR-KEY-HERE</Key>-->
+        <WillShowUI>OnError</WillShowUI>
+      </ProductKey>
+      <AcceptEula>true</AcceptEula>
+    </UserData>
+
+    <!-- 3. ImageInstall: target the 4th (extended) partition -->
+    <ImageInstall>
+      <OSImage>
+        <InstallFrom>
+          <MetaData wcm:action="add">
+            <Key>/IMAGE/INDEX</Key>
+            <Value>4</Value>
+          </MetaData>
+        </InstallFrom>
+        <InstallTo>
           <DiskID>0</DiskID>
-          <WillWipeDisk>true</WillWipeDisk>
-          <CreatePartitions>
-            <CreatePartition wcm:action="add"><Order>1</Order><Size>500</Size><Type>Primary</Type></CreatePartition>
-            <CreatePartition wcm:action="add"><Order>2</Order><Size>100</Size><Type>EFI</Type></CreatePartition>
-            <CreatePartition wcm:action="add"><Order>3</Order><Size>128</Size><Type>MSR</Type></CreatePartition>
-            <CreatePartition wcm:action="add"><Order>4</Order><Extend>true</Extend><Type>Primary</Type></CreatePartition>
-          </CreatePartitions>
-          <ModifyPartitions>
-            <ModifyPartition wcm:action="add">
-              <Order>1</Order><PartitionID>1</PartitionID><Label>Recovery</Label><Format>NTFS</Format>
-              <TypeID>de94bba4-06d1-4d40-a16a-bfd50179d6ac</TypeID>
-            </ModifyPartition>
-            <ModifyPartition wcm:action="add">
-              <Order>2</Order><PartitionID>2</PartitionID><Label>System</Label><Format>FAT32</Format>
-            </ModifyPartition>
-            <ModifyPartition wcm:action="add">
-              <Order>3</Order><PartitionID>3</PartitionID>
-            </ModifyPartition>
-            <ModifyPartition wcm:action="add">
-              <Order>4</Order><PartitionID>4</PartitionID><Format>NTFS</Format>
-            </ModifyPartition>
-          </ModifyPartitions>
-          <WillShowUI>OnError</WillShowUI>
-        </Disk>
-      </DiskConfiguration>
+          <PartitionID>4</PartitionID>
+        </InstallTo>
+        <WillShowUI>OnError</WillShowUI>
+      </OSImage>
+    </ImageInstall>
 
-      <UserData>
-        <AcceptEula>true</AcceptEula>
-        <ProductKey><WillShowUI>Never</WillShowUI></ProductKey>
-      </UserData>
+  </component>
 
-      <ImageInstall>
-        <OSImage>
-          <InstallFrom>
-            <MetaData wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>4</Value></MetaData>
-          </InstallFrom>
-          <InstallTo>
-            <DiskID>0</DiskID><PartitionID>4</PartitionID>
-          </InstallTo>
-          <WillShowUI>OnError</WillShowUI>
-          <InstallToAvailablePartition>false</InstallToAvailablePartition>
-        </OSImage>
-      </ImageInstall>
-    </component>
-
-    <component name="Microsoft-Windows-International-Core-WinPE"
-               processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35"
-               language="neutral" versionScope="nonSxS">
-      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
-      <InputLocale>en-US</InputLocale>
-      <SystemLocale>en-US</SystemLocale>
+  <!-- 4. International settings -->
+  <component name="Microsoft-Windows-International-Core-WinPE"
+             processorArchitecture="amd64"
+             publicKeyToken="31bf3856ad364e35"
+             language="neutral"
+             versionScope="nonSxS"
+             xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <SetupUILanguage>
       <UILanguage>en-US</UILanguage>
-      <UserLocale>en-US</UserLocale>
-    </component>
-  </settings>
+    </SetupUILanguage>
+    <InputLocale>en-US</InputLocale>
+    <SystemLocale>en-US</SystemLocale>
+    <UILanguage>en-US</UILanguage>
+    <UserLocale>en-US</UserLocale>
+  </component>
+</settings>
 
   <!-- specialize PASS: join your domain -->
   <settings pass="specialize">
