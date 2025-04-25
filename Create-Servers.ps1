@@ -33,6 +33,9 @@ if (-not (Test-Path $packerExe)) {
     Write-Host "-> Packer installed at $packerExe" -ForegroundColor Green
 }
 
+# Add packerBin to PATH for this session
+$env:PATH = "$packerBin;$($env:PATH)"
+
 # --- 2) Prompt for ISO path/URL if missing ---
 if (-not $IsoPath) {
     $IsoPath = Read-Host 'Enter local path for Windows Server 2022 Eval ISO (e.g. C:\ISOs\Server2022.iso)'
@@ -43,13 +46,13 @@ if (-not (Test-Path $IsoPath)) {
     }
     Write-Host "Downloading ISO from $IsoUrl to $IsoPath..." -ForegroundColor Cyan
     Invoke-WebRequest -Uri $IsoUrl -OutFile $IsoPath -UseBasicParsing
+    Write-Host "ISO downloaded to $IsoPath" -ForegroundColor Green
 }
 
 # --- 3) Copy official autounattend.xml ---
-$packerDir     = Join-Path $scriptRoot 'packer-Win2022'
-$sourceFile    = Join-Path $packerDir "scripts\uefi\$GuiOrCore\autounattend.xml"
-$ansPath       = Join-Path $scriptRoot 'Autounattend.xml'
-
+$packerDir  = Join-Path $scriptRoot 'packer-Win2022'
+$sourceFile = Join-Path $packerDir "scripts\uefi\$GuiOrCore\autounattend.xml"
+$ansPath    = Join-Path $scriptRoot 'Autounattend.xml'
 if (-not (Test-Path $sourceFile)) {
     Write-Error "Cannot find autounattend template: $sourceFile"
     exit 1
@@ -59,22 +62,24 @@ Write-Host "Copied autounattend.xml for '$GuiOrCore' build to $ansPath" -Foregro
 
 # --- 4) Invoke Packer builds ---
 Push-Location $packerDir
-$buildJson = "win2022-$GuiOrCore_uefi.json"
+$buildJson = "win2022-$GuiOrCore`_uefi.json"
 Write-Host "Starting Packer build: $buildJson" -ForegroundColor Cyan
-& $packerExe build -only=vmware-iso $buildJson
+# Use full path to packer.exe and explicit argument syntax
+& $packerExe 'build' '-only=vmware-iso' $buildJson | Write-Host
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "Packer build failed for $buildJson"
+    Write-Error "Packer build failed for $buildJson with exit code $LASTEXITCODE"
     Pop-Location; exit 1
 }
+Write-Host "Packer build completed successfully." -ForegroundColor Green
 Pop-Location
 
 # --- 5) Post-build provisioning ---
 Write-Host "Starting VMware REST API daemon..." -ForegroundColor Yellow
 $vmwareDir = 'C:\Program Files (x86)\VMware\VMware Workstation'
 $vmrestExe = Join-Path $vmwareDir 'vmrest.exe'
-if (Get-Command vmrest -ErrorAction SilentlyContinue) {
-    Stop-Process -Name vmrest -Force -ErrorAction SilentlyContinue
-}
+# Stop any existing daemon
+Get-Process vmrest -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# Start new daemon
 Start-Process -FilePath $vmrestExe -ArgumentList '-b' -WindowStyle Hidden
 Start-Sleep -Seconds 5
 Write-Host "VMware REST API daemon started." -ForegroundColor Green
@@ -96,11 +101,11 @@ if (-not (Test-Path $tfDir)) {
 }
 Push-Location $tfDir
 Write-Host "Initializing Terraform..." -ForegroundColor Cyan
-terraform init -upgrade
+terraform init -upgrade | Write-Host
 Write-Host "Planning Terraform deployment..." -ForegroundColor Cyan
-terraform plan -out=tfplan
+terraform plan -out=tfplan | Write-Host
 Write-Host "Applying Terraform deployment..." -ForegroundColor Cyan
-terraform apply -auto-approve tfplan
+terraform apply -auto-approve tfplan | Write-Host
 Pop-Location
 
 Write-Host "🎉 Deployment complete!" -ForegroundColor Green
