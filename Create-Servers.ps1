@@ -153,8 +153,8 @@ $xml = @"
 </unattend>
 "@
 
-# Write UTF-8 without BOM
-Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $xml -Encoding utf8NoBOM
+# Write UTF-8
+Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $xml -Encoding UTF8
 Write-Host "-> Autounattend.xml generated (UTF-8 No BOM)." -ForegroundColor Green
 
 ### 4) Write minimal netmap.conf ###
