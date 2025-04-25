@@ -83,7 +83,7 @@ $xml = @"
         <OSImage>
           <InstallFrom>
             <Path>.\Sources\install.wim</Path>
-            <MetaData wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>4</Value></MetaData>
+            <MetaData wcm:action="add"><Key>/IMAGE/NAME</Key><Value>Windows Server 2019 SERVERDATACENTER</Value></MetaData>
           </InstallFrom>
           <InstallTo><DiskID>0</DiskID><PartitionID>4</PartitionID></InstallTo>
           <WillShowUI>OnError</WillShowUI>
