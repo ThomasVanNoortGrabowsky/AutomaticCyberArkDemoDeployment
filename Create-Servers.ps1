@@ -30,7 +30,7 @@ if (-not (Test-Path $packerExe)) {
 }
 
 ### 2) Prompt for inputs ###
-$IsoPath        = Read-Host "1) Windows ISO path (e.g. C:\ISOs\WIN11.iso)"
+$IsoPath        = Read-Host "1) Windows ISO path (e.g. C:\ISOs\WIN2022_EVAL.iso)"
 if (-not (Test-Path $IsoPath -PathType Leaf)) { Write-Error "ISO not found"; exit 1 }
 $VmrestUser     = Read-Host "2) vmrest API username"
 $VmrestSecure   = Read-Host "3) vmrest API password" -AsSecureString
@@ -42,169 +42,120 @@ $DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
 $DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
 $DomainUser     = Read-Host "7) Domain join user (with rights)"
 
-### 3) Generate Autounattend.xml with 4-partition layout + domain join ###
-$xml = @'
+### 3) Generate Autounattend.xml with corrected windowsPE pass ###
+$xml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
 
-  <!-- windowsPE PASS: DiskConfiguration (500+100+128+rest), EULA, image selection -->
+  <!-- 1. windowsPE PASS: DiskConfiguration, ImageInstall, UserData, International -->
   <settings pass="windowsPE">
-  <component name="Microsoft-Windows-Setup"
-             processorArchitecture="amd64"
-             publicKeyToken="31bf3856ad364e35"
-             language="neutral"
-             versionScope="nonSxS"
-             xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
-    <!-- 1. Disk setup: wipe disk and create 4 partitions -->
-    <DiskConfiguration>
-      <Disk wcm:action="add">
-        <DiskID>0</DiskID>
-        <WillWipeDisk>true</WillWipeDisk>
-        <CreatePartitions>
-          <CreatePartition wcm:action="add">
-            <Order>1</Order>
-            <Size>500</Size>
-            <Type>Primary</Type>
-          </CreatePartition>
-          <CreatePartition wcm:action="add">
-            <Order>2</Order>
-            <Size>100</Size>
-            <Type>EFI</Type>
-          </CreatePartition>
-          <CreatePartition wcm:action="add">
-            <Order>3</Order>
-            <Size>128</Size>
-            <Type>MSR</Type>
-          </CreatePartition>
-          <CreatePartition wcm:action="add">
-            <Order>4</Order>
-            <Extend>true</Extend>
-            <Type>Primary</Type>
-          </CreatePartition>
-        </CreatePartitions>
-        <ModifyPartitions>
-          <ModifyPartition wcm:action="add">
-            <Order>1</Order>
-            <PartitionID>1</PartitionID>
-            <Label>Recovery</Label>
-            <Format>NTFS</Format>
-            <TypeID>de94bba4-06d1-4d40-a16a-bfd50179d6ac</TypeID>
-          </ModifyPartition>
-          <ModifyPartition wcm:action="add">
-            <Order>2</Order>
-            <PartitionID>2</PartitionID>
-            <Label>System</Label>
-            <Format>FAT32</Format>
-          </ModifyPartition>
-          <ModifyPartition wcm:action="add">
-            <Order>3</Order>
-            <PartitionID>3</PartitionID>
-          </ModifyPartition>
-          <ModifyPartition wcm:action="add">
-            <Order>4</Order>
-            <PartitionID>4</PartitionID>
-            <Format>NTFS</Format>
-          </ModifyPartition>
-        </ModifyPartitions>
-        <WillShowUI>OnError</WillShowUI>
-      </Disk>
-    </DiskConfiguration>
-
-    <!-- 2. UserData: accept EULA and defer product-key prompt -->
-    <UserData>
-      <ProductKey>
-        <!-- Leave Key commented for evaluation media -->
-        <!--<Key>ENTER-YOUR-KEY-HERE</Key>-->
-        <WillShowUI>OnError</WillShowUI>
-      </ProductKey>
-      <AcceptEula>true</AcceptEula>
-    </UserData>
-
-    <!-- 3. ImageInstall: target the 4th partition with Path and MetaData -->
-    <ImageInstall>
-      <OSImage>
-        <InstallFrom>
-          <Path>.\Sources\install.wim</Path>
-          <MetaData wcm:action="add">
-            <Key>/IMAGE/INDEX</Key>
-            <Value>4</Value>
-          </MetaData>
-        </InstallFrom>
-        <InstallTo>
+      <!-- Disk layout: Recovery, EFI, MSR, OS -->
+      <DiskConfiguration>
+        <Disk wcm:action="add">
           <DiskID>0</DiskID>
-          <PartitionID>4</PartitionID>
-        </InstallTo>
-        <WillShowUI>OnError</WillShowUI>
-      </OSImage>
-    </ImageInstall>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add"><Order>1</Order><Size>550</Size><Type>Primary</Type></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>2</Order><Size>100</Size><Type>EFI</Type></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>3</Order><Size>128</Size><Type>MSR</Type></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>4</Order><Extend>true</Extend><Type>Primary</Type></CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Label>WINRE</Label><Format>NTFS</Format><TypeID>DE94BBA4-06D1-4D40-A16A-BFD50179D6AC</TypeID></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID><Label>System</Label><Format>FAT32</Format></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>4</Order><PartitionID>4</PartitionID><Label>OS</Label><Letter>C</Letter><Format>NTFS</Format></ModifyPartition>
+          </ModifyPartitions>
+          <WillShowUI>OnError</WillShowUI>
+        </Disk>
+      </DiskConfiguration>
 
-  </component>
+      <!-- Image selection (must come before UserData) -->
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <Path>.\Sources\install.wim</Path>
+            <MetaData wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>4</Value></MetaData>
+          </InstallFrom>
+          <InstallTo><DiskID>0</DiskID><PartitionID>4</PartitionID></InstallTo>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
 
-  <!-- 4. International settings: unchanged -->
-  <component name="Microsoft-Windows-International-Core-WinPE"
-             processorArchitecture="amd64"
-             publicKeyToken="31bf3856ad364e35"
-             language="neutral"
-             versionScope="nonSxS"
-             xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-    <SetupUILanguage>
+      <!-- Accept EULA and defer product-key prompt for evaluation media -->
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <ProductKey><WillShowUI>OnError</WillShowUI></ProductKey>
+      </UserData>
+    </component>
+
+    <!-- International settings -->
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
       <UILanguage>en-US</UILanguage>
-    </SetupUILanguage>
-    <InputLocale>en-US</InputLocale>
-    <SystemLocale>en-US</SystemLocale>
-    <UILanguage>en-US</UILanguage>
-    <UserLocale>en-US</UserLocale>
-  </component>
-</settings>
+      <UserLocale>en-US</UserLocale>
+    </component>
+  </settings>
 
-  <!-- specialize PASS: join your domain -->
+  <!-- 2. specialize PASS: domain join -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-UnattendedJoin"
-               processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35"
-               language="neutral" versionScope="nonSxS">
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
       <Identification>
         <Credentials>
-          <Domain>${DomainName}</Domain>
-          <Username>${DomainUser}</Username>
+          <Domain>$DomainName</Domain>
+          <Username>$DomainUser</Username>
           <Password>Cyberark1</Password>
         </Credentials>
-        <JoinDomain>${DomainName}</JoinDomain>
+        <JoinDomain>$DomainName</JoinDomain>
       </Identification>
     </component>
   </settings>
 
-  <!-- oobeSystem PASS: set admin password + auto-logon -->
+  <!-- 3. oobeSystem PASS: set admin password + auto-logon -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup"
-               processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35"
-               language="neutral" versionScope="nonSxS">
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
       <UserAccounts>
-        <AdministratorPassword>
-          <Value>Cyberark1</Value>
-          <PlainText>true</PlainText>
-        </AdministratorPassword>
+        <AdministratorPassword><Value>Cyberark1</Value><PlainText>true</PlainText></AdministratorPassword>
       </UserAccounts>
       <AutoLogon>
         <Enabled>true</Enabled>
         <Username>Administrator</Username>
-        <Password>
-          <Value>Cyberark1</Value>
-          <PlainText>true</PlainText>
-        </Password>
+        <Password><Value>Cyberark1</Value><PlainText>true</PlainText></Password>
         <LogonCount>1</LogonCount>
       </AutoLogon>
     </component>
   </settings>
 
 </unattend>
-'@
+"@
 
-# Write ASCII (no BOM)
-Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $xml -Encoding ASCII
-Write-Host "-> Autounattend.xml generated." -ForegroundColor Green
+# Write UTF-8 without BOM (default in PS7)
+Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $xml -Encoding utf8NoBOM
+Write-Host "-> Autounattend.xml generated (UTF-8 No BOM)." -ForegroundColor Green
 
 ### 4) Write minimal netmap.conf ###
 $wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
