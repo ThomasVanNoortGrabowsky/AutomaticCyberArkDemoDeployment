@@ -141,7 +141,7 @@ foreach ($f in $paths) {
 }
 
 ### 5) Generate Packer HCL ###
-$hclIso   = $IsoPath.Replace('\','.').Replace('.','/') # Ensure proper URI format
+$hclIso   = $IsoPath.Replace('\','/')
 $checksum = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
 $packerHcl = @"
 source "vmware-iso" "vault_base" {
@@ -165,3 +165,86 @@ build {
 
 Set-Content -Path "$PSScriptRoot\template.pkr.hcl" -Value $packerHcl -Encoding ASCII
 Write-Host "-> Packer template written." -ForegroundColor Green
+
+### 6) Run Packer ###
+Write-Host "-> Running Packer init & build…" -ForegroundColor Cyan
+& $packerExe init   "$PSScriptRoot\template.pkr.hcl" 2>&1 | Write-Host
+if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed"; exit 1 }
+& $packerExe build  -force "$PSScriptRoot\template.pkr.hcl" 2>&1 | Write-Host
+if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed"; exit 1 }
+
+### 7) Restart vmrest + fetch golden VM ID ###
+Stop-Process -Name vmrest -Force -ErrorAction SilentlyContinue
+Start-Process "$wsDir\vmrest.exe" -ArgumentList "-b" -WindowStyle Hidden
+Start-Sleep 5
+$pair    = "$VmrestUser`:$VmrestPassword"
+$token   = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
+$headers = @{ Authorization = "Basic $token" }
+try {
+    $vms = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $headers
+} catch {
+    Write-Error "vmrest authentication failed"; exit 1
+}
+$BaseId = ($vms | Where-Object name -eq 'vault_base').id
+Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
+
+### 8) Generate & apply Terraform configs ###
+$tfDir = Join-Path $PSScriptRoot 'terraform'
+if (Test-Path $tfDir) { Remove-Item $tfDir -Recurse -Force }
+New-Item -Path $tfDir -ItemType Directory | Out-Null
+
+$main = @"
+terraform {
+  required_providers {
+    vmworkstation = { source = "elsudano/vmworkstation"; version = ">=1.1.6" }
+  }
+}
+
+provider "vmworkstation" {
+  user     = var.vmrest_user
+  password = var.vmrest_password
+  url      = "http://127.0.0.1:8697/api"
+}
+
+"@
+
+if ($InstallVault) {
+    $main += @"
+resource "vmworkstation_vm" "vault" {
+  sourceid     = "$BaseId"
+  denomination = "CyberArk-Vault"
+  processors   = 8
+  memory       = 32768
+  path         = "$DeployPath\CyberArk-Vault"
+}
+"@
+}
+
+foreach ($c in 'PVWA','CPM','PSM') {
+    $lower = $c.ToLower()
+    $main += @"
+resource "vmworkstation_vm" "$lower" {
+  sourceid     = "$BaseId"
+  denomination = "CyberArk-$c"
+  processors   = 4
+  memory       = 8192
+  path         = "$DeployPath\CyberArk-$c"
+}
+"@
+}
+
+Set-Content -Path (Join-Path $tfDir 'main.tf') -Value $main -Encoding ASCII
+
+$vars = @"
+variable "vmrest_user"     { default = "$VmrestUser" }
+variable "vmrest_password" { default = "$VmrestPassword" }
+"@
+Set-Content -Path (Join-Path $tfDir 'variables.tf') -Value $vars -Encoding ASCII
+
+Push-Location $tfDir
+terraform init -upgrade | Write-Host
+terraform plan -out=tfplan   | Write-Host
+terraform apply -auto-approve tfplan | Write-Host
+Pop-Location
+
+Write-Host "🎉 Deployment complete!" -ForegroundColor Green
