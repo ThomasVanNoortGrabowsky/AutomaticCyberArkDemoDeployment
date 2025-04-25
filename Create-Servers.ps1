@@ -6,7 +6,7 @@
     2) Ensure Packer installed locally (v1.11.2)
     3) Prompt for and download/use Windows Server 2022 Eval ISO
     4) Copy official autounattend.xml for GUI/Core UEFI builds
-    5) Initialize Packer to install VMware plugin
+    5) Install VMware Packer plugin
     6) Build VM image via Packer (Workstation)
     7) Post-build provisioning with vmrest & Terraform
 #>
@@ -24,7 +24,8 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 # 1) Clone or update packer-Win2022 templates
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-  Write-Error 'Git is required but not found. Please install Git.'; exit 1
+  Write-Error 'Git is required but not found. Please install Git.'
+  exit 1
 }
 $packerDir = Join-Path $scriptRoot 'packer-Win2022'
 if (Test-Path $packerDir) {
@@ -60,23 +61,25 @@ if (-not (Test-Path $IsoPath)) {
   Invoke-WebRequest -Uri $IsoUrl -OutFile $IsoPath -UseBasicParsing
   Write-Host "ISO downloaded to $IsoPath" -ForegroundColor Green
 }
-
-# Compute ISO variables for Packer
+# Compute ISO variables
 $checksum       = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
 $isoUrlVar      = "file:///$($IsoPath.Replace('\','/'))"
 $isoChecksumVar = "sha256:$checksum"
 
-# 4) Copy official autounattend.xml
+# 4) Copy autounattend.xml
 $source = Join-Path $packerDir "scripts\uefi\$GuiOrCore\autounattend.xml"
 $dest   = Join-Path $scriptRoot 'Autounattend.xml'
-if (-not (Test-Path $source)) { Write-Error "Template not found: $source"; exit 1 }
+if (-not (Test-Path $source)) {
+  Write-Error "Template not found: $source"
+  exit 1
+}
 Copy-Item -Path $source -Destination $dest -Force
 Write-Host "Copied autounattend.xml for '$GuiOrCore' build to $dest" -ForegroundColor Green
 
-# 5) Initialize Packer to install VMware plugin
+# 5) Install VMware plugin for Packer
 Push-Location $packerDir
-Write-Host 'Initializing Packer (installing plugins)...' -ForegroundColor Cyan
-& $packerExe init . | Write-Host
+Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
+& $packerExe plugins install github.com/hashicorp/vmware | Write-Host
 
 # 6) Build VM image via Packer
 $buildJson = "win2022-$GuiOrCore.json"
@@ -85,7 +88,10 @@ Write-Host "Starting Packer build: $buildJson" -ForegroundColor Cyan
     -var "iso_url=$isoUrlVar" `
     -var "iso_checksum=$isoChecksumVar" `
     $buildJson | Write-Host
-if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed (exit code $LASTEXITCODE)"; Pop-Location; exit 1 }
+if ($LASTEXITCODE -ne 0) {
+  Write-Error "Packer build failed (exit code $LASTEXITCODE)"
+  Pop-Location; exit 1
+}
 Write-Host 'Packer build completed successfully.' -ForegroundColor Green
 Pop-Location
 
@@ -97,13 +103,19 @@ Start-Process -FilePath $vmrestExe -ArgumentList '-b' -WindowStyle Hidden
 Start-Sleep 5
 Write-Host 'VMware REST API daemon started.' -ForegroundColor Green
 
-# 8) Configure Terraform CLI
+# 8) Configure Terraform CLI override
 $rc = Join-Path $scriptRoot 'Create-TerraformRc.ps1'
-if (Test-Path $rc) { Write-Host 'Configuring Terraform CLI...' -ForegroundColor Cyan; & $rc }
+if (Test-Path $rc) {
+  Write-Host 'Configuring Terraform CLI...' -ForegroundColor Cyan
+  & $rc
+}
 
 # 9) Run Terraform
 $tfDir = Join-Path $scriptRoot 'terraform'
-if (-not (Test-Path $tfDir)) { Write-Error "Terraform folder not found: $tfDir"; exit 1 }
+if (-not (Test-Path $tfDir)) {
+  Write-Error "Terraform folder not found: $tfDir"
+  exit 1
+}
 Push-Location $tfDir
 Write-Host 'Initializing Terraform...' -ForegroundColor Cyan
 terraform init -upgrade | Write-Host
