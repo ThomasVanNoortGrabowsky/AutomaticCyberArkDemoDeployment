@@ -73,7 +73,7 @@ Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
 
 # 6) Inject WinRM provisioner into Packer JSON
 $jsonPath = Join-Path $packerDir "win2022-$GuiOrCore.json"
-$packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json -Depth 10
+$packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
 $winrmProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
