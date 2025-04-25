@@ -114,20 +114,19 @@ $xml = @'
 
     <!-- 2. UserData: accept EULA and defer product-key prompt -->
     <UserData>
-      <!-- Product Key from https://www.microsoft.com/en-us/evalcenter/ -->
       <ProductKey>
-        <!-- Do not uncomment the Key element if you are using trial ISOs -->
-        <!-- You must uncomment the Key element (and optionally insert your own key) if using retail/volume ISOs -->
+        <!-- Leave Key commented for evaluation media -->
         <!--<Key>ENTER-YOUR-KEY-HERE</Key>-->
         <WillShowUI>OnError</WillShowUI>
       </ProductKey>
       <AcceptEula>true</AcceptEula>
     </UserData>
 
-    <!-- 3. ImageInstall: target the 4th (extended) partition -->
+    <!-- 3. ImageInstall: target the 4th partition with Path and MetaData -->
     <ImageInstall>
       <OSImage>
         <InstallFrom>
+          <Path>.\Sources\install.wim</Path>
           <MetaData wcm:action="add">
             <Key>/IMAGE/INDEX</Key>
             <Value>4</Value>
@@ -143,7 +142,7 @@ $xml = @'
 
   </component>
 
-  <!-- 4. International settings -->
+  <!-- 4. International settings: unchanged -->
   <component name="Microsoft-Windows-International-Core-WinPE"
              processorArchitecture="amd64"
              publicKeyToken="31bf3856ad364e35"
