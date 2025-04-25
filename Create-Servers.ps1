@@ -45,7 +45,9 @@ $DomainUser     = Read-Host "7) Domain join user (with rights)"
 ### 3) Generate Autounattend.xml with corrected windowsPE pass ###
 $xml = @"
 <?xml version="1.0" encoding="utf-8"?>
-<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <!-- windowsPE PASS: DiskConfiguration, ImageInstall, UserData, International settings -->
   <settings pass="windowsPE">
@@ -53,11 +55,9 @@ $xml = @"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+               versionScope="nonSxS">
 
-      <!-- Disk layout: Recovery, EFI, MSR, OS -->
+      <!-- 1. Disk layout -->
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
@@ -78,7 +78,7 @@ $xml = @"
         </Disk>
       </DiskConfiguration>
 
-      <!-- Image selection (must come before UserData) -->
+      <!-- 2. ImageInstall (must come before UserData) -->
       <ImageInstall>
         <OSImage>
           <InstallFrom>
@@ -90,21 +90,22 @@ $xml = @"
         </OSImage>
       </ImageInstall>
 
-      <!-- Accept EULA and defer product-key prompt for evaluation media -->
+      <!-- 3. UserData with empty ProductKey for Evaluation -->
       <UserData>
         <AcceptEula>true</AcceptEula>
-        <ProductKey><WillShowUI>OnError</WillShowUI></ProductKey>
+        <ProductKey>
+          <!-- No <Key> for evaluation media -->
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
       </UserData>
     </component>
 
-    <!-- International settings -->
+    <!-- 4. International/Core WinPE settings -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+               versionScope="nonSxS">
       <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
       <InputLocale>en-US</InputLocale>
       <SystemLocale>en-US</SystemLocale>
@@ -112,50 +113,12 @@ $xml = @"
       <UserLocale>en-US</UserLocale>
     </component>
   </settings>
-
-  <!-- specialize PASS: join your domain -->
-  <settings pass="specialize">
-    <component name="Microsoft-Windows-UnattendedJoin"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-      <Identification>
-        <Credentials>
-          <Domain>$DomainName</Domain>
-          <Username>$DomainUser</Username>
-          <Password>Cyberark1</Password>
-        </Credentials>
-        <JoinDomain>$DomainName</JoinDomain>
-      </Identification>
-    </component>
-  </settings>
-
-  <!-- oobeSystem PASS: set admin password + auto-logon -->
-  <settings pass="oobeSystem">
-    <component name="Microsoft-Windows-Shell-Setup"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-      <UserAccounts>
-        <AdministratorPassword><Value>Cyberark1</Value><PlainText>true</PlainText></AdministratorPassword>
-      </UserAccounts>
-      <AutoLogon>
-        <Enabled>true</Enabled>
-        <Username>Administrator</Username>
-        <Password><Value>Cyberark1</Value><PlainText>true</PlainText></Password>
-        <LogonCount>1</LogonCount>
-      </AutoLogon>
-    </component>
-  </settings>
-
 </unattend>
 "@
 
-# Write UTF-8
+# Write UTF-8 without BOM
 Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $xml -Encoding UTF8
-Write-Host "-> Autounattend.xml generated (UTF-8 No BOM)." -ForegroundColor Green
+Write-Host "-> Autounattend.xml generated (UTF-8)." -ForegroundColor Green
 
 ### 4) Write minimal netmap.conf ###
 $wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
@@ -178,7 +141,7 @@ foreach ($f in $paths) {
 }
 
 ### 5) Generate Packer HCL ###
-$hclIso   = $IsoPath.Replace('\','/')
+$hclIso   = $IsoPath.Replace('\','.').Replace('.','/') # Ensure proper URI format
 $checksum = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
 $packerHcl = @"
 source "vmware-iso" "vault_base" {
@@ -202,86 +165,3 @@ build {
 
 Set-Content -Path "$PSScriptRoot\template.pkr.hcl" -Value $packerHcl -Encoding ASCII
 Write-Host "-> Packer template written." -ForegroundColor Green
-
-### 6) Run Packer ###
-Write-Host "-> Running Packer init & build…" -ForegroundColor Cyan
-& $packerExe init   "$PSScriptRoot\template.pkr.hcl" 2>&1 | Write-Host
-if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed"; exit 1 }
-& $packerExe build  -force "$PSScriptRoot\template.pkr.hcl" 2>&1 | Write-Host
-if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed"; exit 1 }
-
-### 7) Restart vmrest + fetch golden VM ID ###
-Stop-Process -Name vmrest -Force -ErrorAction SilentlyContinue
-Start-Process "$wsDir\vmrest.exe" -ArgumentList "-b" -WindowStyle Hidden
-Start-Sleep 5
-$pair    = "$VmrestUser`:$VmrestPassword"
-$token   = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
-$headers = @{ Authorization = "Basic $token" }
-try {
-    $vms = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $headers
-} catch {
-    Write-Error "vmrest authentication failed"; exit 1
-}
-$BaseId = ($vms | Where-Object name -eq 'vault_base').id
-Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
-
-### 8) Generate & apply Terraform configs ###
-$tfDir = Join-Path $PSScriptRoot 'terraform'
-if (Test-Path $tfDir) { Remove-Item $tfDir -Recurse -Force }
-New-Item -Path $tfDir -ItemType Directory | Out-Null
-
-$main = @"
-terraform {
-  required_providers {
-    vmworkstation = { source = "elsudano/vmworkstation"; version = ">=1.1.6" }
-  }
-}
-
-provider "vmworkstation" {
-  user     = var.vmrest_user
-  password = var.vmrest_password
-  url      = "http://127.0.0.1:8697/api"
-}
-
-"@
-
-if ($InstallVault) {
-    $main += @"
-resource "vmworkstation_vm" "vault" {
-  sourceid     = "$BaseId"
-  denomination = "CyberArk-Vault"
-  processors   = 8
-  memory       = 32768
-  path         = "$DeployPath\CyberArk-Vault"
-}
-"@
-}
-
-foreach ($c in 'PVWA','CPM','PSM') {
-    $lower = $c.ToLower()
-    $main += @"
-resource "vmworkstation_vm" "$lower" {
-  sourceid     = "$BaseId"
-  denomination = "CyberArk-$c"
-  processors   = 4
-  memory       = 8192
-  path         = "$DeployPath\CyberArk-$c"
-}
-"@
-}
-
-Set-Content -Path (Join-Path $tfDir 'main.tf') -Value $main -Encoding ASCII
-
-$vars = @"
-variable "vmrest_user"     { default = "$VmrestUser" }
-variable "vmrest_password" { default = "$VmrestPassword" }
-"@
-Set-Content -Path (Join-Path $tfDir 'variables.tf') -Value $vars -Encoding ASCII
-
-Push-Location $tfDir
-terraform init -upgrade | Write-Host
-terraform plan -out=tfplan   | Write-Host
-terraform apply -auto-approve tfplan | Write-Host
-Pop-Location
-
-Write-Host "🎉 Deployment complete!" -ForegroundColor Green
