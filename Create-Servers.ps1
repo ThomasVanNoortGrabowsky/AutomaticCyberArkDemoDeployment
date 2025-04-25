@@ -1,250 +1,105 @@
 <#
   Create-Servers.ps1
   -------------------
-  Automated CyberArk lab:
-    1) Unattended Windows ISO → Packer golden image
-    2) vmrest-backed Terraform clones of Vault (optional) + PVWA/CPM/PSM
+  Automated CyberArk lab using Packer-Win2022 templates:
+    1) Download/use Windows Server 2022 Eval ISO
+    2) Copy official autounattend.xml for GUI or Core UEFI builds
+    3) Build VM images via Packer (Workstation, UEFI)
+    4) Post-build provisioning with vmrest & Terraform
 #>
+
+[CmdletBinding()]
+param(
+    [string]$GuiOrCore = 'gui',    # 'gui' or 'core'
+    [string]$IsoUrl,
+    [string]$IsoPath
+)
 
 $ErrorActionPreference = 'Stop'
 
-### 0) Elevate to Admin ###
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-    ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process pwsh "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
-    exit
+# 1) Validate parameters
+if ($GuiOrCore -notin @('gui','core')) {
+    Write-Error "Invalid build type '$GuiOrCore'. Use 'gui' or 'core'."
+    exit 1
+}
+if (-not (Test-Path $IsoPath)) {
+    # Download if URL provided
+    if ($IsoUrl) {
+        Write-Host "Downloading ISO from $IsoUrl..." -ForegroundColor Cyan
+        Invoke-WebRequest -Uri $IsoUrl -OutFile $IsoPath -UseBasicParsing
+    } else {
+        Write-Error "ISO not found at $IsoPath and no IsoUrl given."
+        exit 1
+    }
 }
 
-### 1) Ensure Packer ###
-$packerVersion = "1.11.4"
-$installDir    = Join-Path $PSScriptRoot "packer-bin"
-$packerExe     = Join-Path $installDir "packer.exe"
-if (-not (Test-Path $packerExe)) {
-    Write-Host "Downloading Packer v$packerVersion…" -ForegroundColor Cyan
-    New-Item $installDir -ItemType Directory -Force | Out-Null
-    $zip = Join-Path $installDir "packer.zip"
-    Invoke-WebRequest -Uri "https://releases.hashicorp.com/packer/$packerVersion/packer_${packerVersion}_windows_amd64.zip" -OutFile $zip
-    Expand-Archive $zip $installDir -Force
-    Remove-Item $zip
-    Write-Host "-> Packer installed." -ForegroundColor Green
+# 2) Copy official autounattend.xml
+$scriptRoot = $PSScriptRoot
+$packerDir  = Join-Path $scriptRoot 'packer-Win2022'
+$autounattendSource = Join-Path $packerDir "scripts\uefi\$GuiOrCore\autounattend.xml"
+$ansPath = Join-Path $scriptRoot 'Autounattend.xml'
+
+if (-not (Test-Path $autounattendSource)) {
+    Write-Error "Cannot find autounattend template: $autounattendSource"
+    exit 1
 }
 
-### 2) Prompt for inputs ###
-$IsoPath        = Read-Host "1) Windows ISO path (e.g. C:\ISOs\WIN2022_EVAL.iso)"
-if (-not (Test-Path $IsoPath -PathType Leaf)) { Write-Error "ISO not found"; exit 1 }
-$VmrestUser     = Read-Host "2) vmrest API username"
-$VmrestSecure   = Read-Host "3) vmrest API password" -AsSecureString
-$VmrestPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($VmrestSecure)
-)
-$InstallVault   = (Read-Host "4) Install Vault server? (Y/N)").ToUpper() -eq 'Y'
-$DeployPath     = Read-Host "5) Base folder for VMs (e.g. C:\VMs)"
-$DomainName     = Read-Host "6) Domain to join (e.g. corp.local)"
-$DomainUser     = Read-Host "7) Domain join user (with rights)"
+Copy-Item -Path $autounattendSource -Destination $ansPath -Force
+Write-Host "Copied autounattend.xml for '$GuiOrCore' build to $ansPath" -ForegroundColor Green
 
-### 3) Generate Autounattend.xml with corrected windowsPE pass ###
-$xml = @"
-<?xml version="1.0" encoding="utf-8"?>
-<unattend xmlns="urn:schemas-microsoft-com:unattend"
-          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+# 3) Packer build
+Push-Location $packerDir
 
-  <!-- windowsPE PASS: DiskConfiguration, ImageInstall, UserData, International settings -->
-  <settings pass="windowsPE">
-    <component name="Microsoft-Windows-Setup"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
+# Build JSON file names
+$guiJson  = "win2022-gui_uefi.json"
+$coreJson = "win2022-core_uefi.json"
 
-      <!-- 1. Disk layout -->
-      <DiskConfiguration>
-        <Disk wcm:action="add">
-          <DiskID>0</DiskID>
-          <WillWipeDisk>true</WillWipeDisk>
-          <CreatePartitions>
-            <CreatePartition wcm:action="add"><Order>1</Order><Size>550</Size><Type>Primary</Type></CreatePartition>
-            <CreatePartition wcm:action="add"><Order>2</Order><Size>100</Size><Type>EFI</Type></CreatePartition>
-            <CreatePartition wcm:action="add"><Order>3</Order><Size>128</Size><Type>MSR</Type></CreatePartition>
-            <CreatePartition wcm:action="add"><Order>4</Order><Extend>true</Extend><Type>Primary</Type></CreatePartition>
-          </CreatePartitions>
-          <ModifyPartitions>
-            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Label>WINRE</Label><Format>NTFS</Format><TypeID>DE94BBA4-06D1-4D40-A16A-BFD50179D6AC</TypeID></ModifyPartition>
-            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID><Label>System</Label><Format>FAT32</Format></ModifyPartition>
-            <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID></ModifyPartition>
-            <ModifyPartition wcm:action="add"><Order>4</Order><PartitionID>4</PartitionID><Label>OS</Label><Letter>C</Letter><Format>NTFS</Format></ModifyPartition>
-          </ModifyPartitions>
-          <WillShowUI>OnError</WillShowUI>
-        </Disk>
-      </DiskConfiguration>
-
-      <!-- 2. ImageInstall (must come before UserData) -->
-      <ImageInstall>
-        <OSImage>
-          <InstallFrom>
-            <Path>.\Sources\install.wim</Path>
-            <MetaData wcm:action="add"><Key>/IMAGE/NAME</Key><Value>Windows Server 2019 SERVERDATACENTER</Value></MetaData>
-          </InstallFrom>
-          <InstallTo><DiskID>0</DiskID><PartitionID>4</PartitionID></InstallTo>
-          <WillShowUI>OnError</WillShowUI>
-        </OSImage>
-      </ImageInstall>
-
-      <!-- 3. UserData with empty ProductKey for Evaluation -->
-      <UserData>
-        <AcceptEula>true</AcceptEula>
-        <ProductKey>
-          <!-- No <Key> for evaluation media -->
-          <WillShowUI>OnError</WillShowUI>
-        </ProductKey>
-      </UserData>
-    </component>
-
-    <!-- 4. International/Core WinPE settings -->
-    <component name="Microsoft-Windows-International-Core-WinPE"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
-      <InputLocale>en-US</InputLocale>
-      <SystemLocale>en-US</SystemLocale>
-      <UILanguage>en-US</UILanguage>
-      <UserLocale>en-US</UserLocale>
-    </component>
-  </settings>
-</unattend>
-"@
-
-# Write UTF-8 without BOM
-Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $xml -Encoding UTF8
-Write-Host "-> Autounattend.xml generated (UTF-8)." -ForegroundColor Green
-
-### 4) Write minimal netmap.conf ###
-$wsDir       = 'C:\Program Files (x86)\VMware\VMware Workstation'
-$programData = Join-Path $env:ProgramData 'VMware'
-$paths       = @( Join-Path $wsDir 'netmap.conf'; Join-Path $programData 'netmap.conf' )
-$netmap      = @"
-# Minimal netmap.conf for Packer
-network0.name   = "Bridged"
-network0.device = "vmnet0"
-network1.name   = "HostOnly"
-network1.device = "vmnet1"
-network8.name   = "NAT"
-network8.device = "vmnet8"
-"@
-foreach ($f in $paths) {
-    $d = Split-Path $f -Parent
-    if (-not (Test-Path $d)) { New-Item -Path $d -ItemType Directory -Force | Out-Null }
-    Set-Content -Path $f -Value $netmap -Encoding ASCII
-    Write-Host "-> netmap.conf written to $f" -ForegroundColor Green
+if ($GuiOrCore -eq 'gui') {
+    Write-Host "Starting Packer build: $guiJson" -ForegroundColor Cyan
+    packer build -only=vmware-iso $guiJson
+} else {
+    Write-Host "Starting Packer build: $coreJson" -ForegroundColor Cyan
+    packer build -only=vmware-iso $coreJson
 }
 
-### 5) Generate Packer HCL ###
-$hclIso   = $IsoPath.Replace('\','/')
-$checksum = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
-$packerHcl = @"
-source "vmware-iso" "vault_base" {
-  iso_url          = "file:///$hclIso"
-  iso_checksum     = "sha256:$checksum"
-  network          = "nat"
-  communicator     = "winrm"
-  winrm_username   = "Administrator"
-  winrm_password   = "Cyberark1"
-  floppy_files     = ["Autounattend.xml"]
-  disk_size        = 81920
-  cpus             = 8
-  memory           = 32768
-  shutdown_command = "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\""
-}
-
-build {
-  sources = ["source.vmware-iso.vault_base"]
-}
-"@
-
-Set-Content -Path "$PSScriptRoot\template.pkr.hcl" -Value $packerHcl -Encoding ASCII
-Write-Host "-> Packer template written." -ForegroundColor Green
-
-### 6) Run Packer ###
-Write-Host "-> Running Packer init & build…" -ForegroundColor Cyan
-& $packerExe init   "$PSScriptRoot\template.pkr.hcl" 2>&1 | Write-Host
-if ($LASTEXITCODE -ne 0) { Write-Error "Packer init failed"; exit 1 }
-& $packerExe build  -force "$PSScriptRoot\template.pkr.hcl" 2>&1 | Write-Host
-if ($LASTEXITCODE -ne 0) { Write-Error "Packer build failed"; exit 1 }
-
-### 7) Restart vmrest + fetch golden VM ID ###
-Stop-Process -Name vmrest -Force -ErrorAction SilentlyContinue
-Start-Process "$wsDir\vmrest.exe" -ArgumentList "-b" -WindowStyle Hidden
-Start-Sleep 5
-$pair    = "$VmrestUser`:$VmrestPassword"
-$token   = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
-$headers = @{ Authorization = "Basic $token" }
-try {
-    $vms = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $headers
-} catch {
-    Write-Error "vmrest authentication failed"; exit 1
-}
-$BaseId = ($vms | Where-Object name -eq 'vault_base').id
-Write-Host "-> Golden VM ID: $BaseId" -ForegroundColor Green
-
-### 8) Generate & apply Terraform configs ###
-$tfDir = Join-Path $PSScriptRoot 'terraform'
-if (Test-Path $tfDir) { Remove-Item $tfDir -Recurse -Force }
-New-Item -Path $tfDir -ItemType Directory | Out-Null
-
-$main = @"
-terraform {
-  required_providers {
-    vmworkstation = { source = "elsudano/vmworkstation"; version = ">=1.1.6" }
-  }
-}
-
-provider "vmworkstation" {
-  user     = var.vmrest_user
-  password = var.vmrest_password
-  url      = "http://127.0.0.1:8697/api"
-}
-
-"@
-
-if ($InstallVault) {
-    $main += @"
-resource "vmworkstation_vm" "vault" {
-  sourceid     = "$BaseId"
-  denomination = "CyberArk-Vault"
-  processors   = 8
-  memory       = 32768
-  path         = "$DeployPath\CyberArk-Vault"
-}
-"@
-}
-
-foreach ($c in 'PVWA','CPM','PSM') {
-    $lower = $c.ToLower()
-    $main += @"
-resource "vmworkstation_vm" "$lower" {
-  sourceid     = "$BaseId"
-  denomination = "CyberArk-$c"
-  processors   = 4
-  memory       = 8192
-  path         = "$DeployPath\CyberArk-$c"
-}
-"@
-}
-
-Set-Content -Path (Join-Path $tfDir 'main.tf') -Value $main -Encoding ASCII
-
-$vars = @"
-variable "vmrest_user"     { default = "$VmrestUser" }
-variable "vmrest_password" { default = "$VmrestPassword" }
-"@
-Set-Content -Path (Join-Path $tfDir 'variables.tf') -Value $vars -Encoding ASCII
-
-Push-Location $tfDir
-terraform init -upgrade | Write-Host
-terraform plan -out=tfplan   | Write-Host
-terraform apply -auto-approve tfplan | Write-Host
 Pop-Location
 
-Write-Host "🎉 Deployment complete!" -ForegroundColor Green
+# 4) Post-build provisioning (vmrest & Terraform)
+Write-Host "4) Starting VMware REST API daemon..." -ForegroundColor Yellow
+
+# 4.1 Start vmrest daemon
+$vmwareDir = 'C:\Program Files (x86)\VMware\VMware Workstation'
+$vmrestExe = Join-Path $vmwareDir 'vmrest.exe'
+Stop-Process -Name vmrest -Force -ErrorAction SilentlyContinue
+Start-Process -FilePath $vmrestExe -ArgumentList '-b' -WindowStyle Hidden
+Start-Sleep -Seconds 5
+Write-Host "VMware REST API daemon started." -ForegroundColor Green
+
+# 4.2 Configure Terraform CLI using Create-TerraformRc.ps1
+$terraformRcScript = Join-Path $scriptRoot 'Create-TerraformRc.ps1'
+if (Test-Path $terraformRcScript) {
+    Write-Host "Configuring Terraform CLI..." -ForegroundColor Cyan
+    & $terraformRcScript
+} else {
+    Write-Warning "Terraform RC script not found: $terraformRcScript"
+}
+
+# 4.3 Run Terraform deployment
+Write-Host "Running Terraform deployment..." -ForegroundColor Cyan
+$tfDir = Join-Path $scriptRoot 'terraform'
+if (-not (Test-Path $tfDir)) {
+    Write-Error "Terraform directory not found: $tfDir"; exit 1
+}
+Push-Location $tfDir
+
+Write-Host "terraform init -upgrade" -ForegroundColor Cyan
+terraform init -upgrade
+
+Write-Host "terraform plan -out=tfplan" -ForegroundColor Cyan
+terraform plan -out=tfplan
+
+Write-Host "terraform apply -auto-approve tfplan" -ForegroundColor Cyan
+terraform apply -auto-approve tfplan
+
+Pop-Location
+Write-Host "🎉 Terraform deployment complete!" -ForegroundColor Green
