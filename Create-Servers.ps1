@@ -2,7 +2,7 @@
   Create-Servers.ps1
   -------------------
   Automated CyberArk lab using Packer-Win2022 templates:
-    1) Ensure Packer installed locally
+    1) Ensure Packer installed locally (v1.11.2)
     2) Prompt for and download/use Windows Server 2022 Eval ISO
     3) Copy official autounattend.xml for GUI or Core builds
     4) Build VM image via Packer (Workstation)
@@ -24,10 +24,10 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $packerBin = Join-Path $scriptRoot 'packer-bin'
 $packerExe = Join-Path $packerBin 'packer.exe'
 if (-not (Test-Path $packerExe)) {
-    Write-Host "Downloading Packer v1.11.4..." -ForegroundColor Cyan
+    Write-Host "Downloading Packer v1.11.2..." -ForegroundColor Cyan
     New-Item -Path $packerBin -ItemType Directory -Force | Out-Null
     $zip = Join-Path $packerBin 'packer.zip'
-    Invoke-WebRequest -Uri "https://releases.hashicorp.com/packer/1.11.4/packer_1.11.4_windows_amd64.zip" -OutFile $zip -UseBasicParsing
+    Invoke-WebRequest -Uri "https://releases.hashicorp.com/packer/1.11.2/packer_1.11.2_windows_amd64.zip" -OutFile $zip -UseBasicParsing
     Expand-Archive -Path $zip -DestinationPath $packerBin -Force
     Remove-Item $zip
     Write-Host "-> Packer installed at $packerExe" -ForegroundColor Green
@@ -49,9 +49,9 @@ if (-not (Test-Path $IsoPath)) {
 }
 
 # Compute ISO variables for Packer
-$checksum      = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
-$isoUrlVar     = "file:///$($IsoPath.Replace('\','/'))"
-$isoChecksumVar= "sha256:$checksum"
+$checksum       = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
+$isoUrlVar      = "file:///$($IsoPath.Replace('\','/'))"
+$isoChecksumVar = "sha256:$checksum"
 
 # --- 3) Copy official autounattend.xml ---
 $packerDir  = Join-Path $scriptRoot 'packer-Win2022'
@@ -68,7 +68,6 @@ Write-Host "Copied autounattend.xml for '$GuiOrCore' build to $ansPath" -Foregro
 Push-Location $packerDir
 $buildJson = "win2022-$GuiOrCore.json"
 Write-Host "Starting Packer build: $buildJson" -ForegroundColor Cyan
-# Use local ISO and checksum
 & $packerExe build -only=vmware-iso `
     -var "iso_url=$isoUrlVar" `
     -var "iso_checksum=$isoChecksumVar" `
