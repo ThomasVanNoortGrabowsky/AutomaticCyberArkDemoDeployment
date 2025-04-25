@@ -47,7 +47,7 @@ $xml = @"
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
 
-  <!-- 1. windowsPE PASS: DiskConfiguration, ImageInstall, UserData, International -->
+  <!-- windowsPE PASS: DiskConfiguration, ImageInstall, UserData, International settings -->
   <settings pass="windowsPE">
     <component name="Microsoft-Windows-Setup"
                processorArchitecture="amd64"
@@ -113,7 +113,7 @@ $xml = @"
     </component>
   </settings>
 
-  <!-- 2. specialize PASS: domain join -->
+  <!-- specialize PASS: join your domain -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-UnattendedJoin"
                processorArchitecture="amd64"
@@ -131,7 +131,7 @@ $xml = @"
     </component>
   </settings>
 
-  <!-- 3. oobeSystem PASS: set admin password + auto-logon -->
+  <!-- oobeSystem PASS: set admin password + auto-logon -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
@@ -153,7 +153,7 @@ $xml = @"
 </unattend>
 "@
 
-# Write UTF-8 without BOM (default in PS7)
+# Write UTF-8 without BOM
 Set-Content -Path "$PSScriptRoot\Autounattend.xml" -Value $xml -Encoding utf8NoBOM
 Write-Host "-> Autounattend.xml generated (UTF-8 No BOM)." -ForegroundColor Green
 
