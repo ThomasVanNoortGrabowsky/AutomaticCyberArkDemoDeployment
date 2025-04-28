@@ -98,7 +98,6 @@ if (-not $packerObj.provisioners) {
   $packerObj | Add-Member -MemberType NoteProperty -Name provisioners -Value @()
 }
 
-# Prepend WinRM, then existing, then update-check
 $packerObj.provisioners = @($winrmProv) + $packerObj.provisioners + @($updateCheckProv)
 
 $packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
@@ -113,14 +112,18 @@ if (Test-Path $outputDir) {
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $outputDir
   cmd /c "rd /s /q `"$outputDir`""
 }
+
+# → CD into packer-Win2022 so all relative paths resolve correctly
+Push-Location $packerDir
 Write-Host "Building win2022-$GuiOrCore.json with WinRM + update-check provisioners..." -ForegroundColor Cyan
 & $packerExe build `
     -only=vmware-iso `
     -var "iso_url=$isoUrlVar" `
     -var "iso_checksum=$isoChecksumVar" `
-    (Join-Path $packerDir "win2022-$GuiOrCore.json")
-if ($LASTEXITCODE -ne 0) { Write-Error 'Packer build failed.'; exit 1 }
+    "win2022-$GuiOrCore.json"
+if ($LASTEXITCODE -ne 0) { Write-Error 'Packer build failed.'; Pop-Location; exit 1 }
 Write-Host 'Packer build completed successfully.' -ForegroundColor Green
+Pop-Location
 
 # 8) Start VMware REST API daemon
 Write-Host 'Starting VMware REST API daemon...' -ForegroundColor Yellow
