@@ -16,9 +16,9 @@
 [CmdletBinding()]
 param(
   [ValidateSet('gui','core')]
-  [string]$GuiOrCore = 'gui',    # 'gui' or 'core'
+  [string]$GuiOrCore = 'gui',
   [Parameter(Mandatory)]
-  [string]$IsoPath               # Local path to the WS2022 Eval ISO
+  [string]$IsoPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,7 +71,7 @@ Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
 $jsonPath  = Join-Path $packerDir "win2022-$GuiOrCore.json"
 $packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
 
-# --- New WinRM provisioner using PS remoting & WSMan drive ---
+# WinRM provisioner using PS remoting & WSMan drive
 $winrmProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
@@ -84,14 +84,23 @@ $winrmProv = [PSCustomObject]@{
   )
 }
 
-# Update-check provisioner
+# Update-check provisioner: enable/update services, then COM search
 $updateCheckProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
-    'if (-not (Get-Module PSWindowsUpdate -ListAvailable)) { Install-Module -Name PSWindowsUpdate -Force -Scope AllUsers -AllowClobber }',
-    'Import-Module PSWindowsUpdate',
-    '$pending = (Get-WindowsUpdate -MicrosoftUpdate -IgnoreUserInput -AcceptAll -WhatIf | Where-Object { $_.IsInstalled -eq $false }).Count',
-    'if ($pending -gt 0) { Write-Error "There are $pending pending updates. Failing build."; exit 1 }',
+    # ensure Windows Update agent & dependencies are enabled
+    'foreach ($svc in "wuauserv","bits","cryptsvc","msiserver") {',
+    '  Set-Service -Name $svc -StartupType Manual -ErrorAction Stop',
+    '  if ((Get-Service -Name $svc).Status -ne "Running") { Start-Service -Name $svc -ErrorAction Stop }',
+    '}',
+    # COM-based update search
+    '$searcher = New-Object -ComObject Microsoft.Update.Searcher',
+    '$results  = $searcher.Search("IsInstalled=0 and Type=\'Software\'")',
+    '$pending  = $results.Updates.Count',
+    'if ($pending -gt 0) {',
+    '  Write-Error "There are $pending pending updates. Failing build."',
+    '  exit 1',
+    '}',
     'Write-Host "All updates installed."'
   )
 }
@@ -103,7 +112,9 @@ if (-not $packerObj.provisioners) {
 # Prepend WinRM, then any existing, then the update-check
 $packerObj.provisioners = @($winrmProv) + $packerObj.provisioners + @($updateCheckProv)
 
-$packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
+$packerObj |
+  ConvertTo-Json -Depth 10 |
+  Set-Content -Path $jsonPath -Encoding ASCII
 Write-Host 'Injected WinRM and Update-check provisioners into Packer JSON.' -ForegroundColor Green
 Pop-Location
 
@@ -116,7 +127,7 @@ if (Test-Path $outputDir) {
   cmd /c "rd /s /q `"$outputDir`""
 }
 
-# CD into packer directory so floppy_files etc. all resolve
+# CD into packer directory so floppy_files etc. resolve
 Push-Location $packerDir
 Write-Host "Building win2022-$GuiOrCore.json with WinRM + update-check provisioners..." -ForegroundColor Cyan
 & $packerExe build `
