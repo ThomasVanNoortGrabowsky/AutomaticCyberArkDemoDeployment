@@ -1,9 +1,9 @@
 <#
   Create-Servers.ps1
   -------------------
-  1) Builds a minimal Win2022 VM with Packer (only WinRM).
+  1) Builds a minimal Win2022 VM with Packer (only a forced shutdown).
   2) Prompts for where to store Terraform VMs and whether to deploy the Vault.
-  3) Updates terraform.tfvars (using your GitHub files) and runs Terraform.
+  3) Updates terraform.tfvars and runs Terraform.
 #>
 
 [CmdletBinding()]
@@ -67,7 +67,7 @@ $isoUrlVar      = "file:///$($IsoPath.Replace('\','/'))"
 $isoChecksumVar = "sha256:$checksum"
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 4) Copy autounattend.xml
+# 4) Copy the correct autounattend.xml
 # ──────────────────────────────────────────────────────────────────────────────
 $srcAuto  = Join-Path $packerDir "scripts\uefi\$GuiOrCore\autounattend.xml"
 $destAuto = Join-Path $scriptRoot 'Autounattend.xml'
@@ -78,7 +78,7 @@ Copy-Item -Path $srcAuto -Destination $destAuto -Force
 Write-Host "Copied autounattend.xml for '$GuiOrCore'." -ForegroundColor Green
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 5) Install VMware Packer plugin
+# 5) Install the VMware Packer plugin
 # ──────────────────────────────────────────────────────────────────────────────
 Push-Location $packerDir
 Write-Host 'Installing VMware Packer plugin…' -ForegroundColor Cyan
@@ -86,13 +86,23 @@ Write-Host 'Installing VMware Packer plugin…' -ForegroundColor Cyan
 Pop-Location
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 6) Strip out all in-guest provisioners (only unattended + WinRM needed)
+# 6) Strip out all in-guest provisioners and force a shutdown
 # ──────────────────────────────────────────────────────────────────────────────
 $jsonPath  = Join-Path $packerDir "win2022-$GuiOrCore.json"
 $packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
-$packerObj.provisioners = @()
+
+$shutdownProv = [PSCustomObject]@{
+  type   = 'powershell'
+  inline = @(
+    'Write-Host "Waiting 5s before shutdown..."',
+    'Start-Sleep -Seconds 5',
+    'shutdown.exe /s /t 0 /f'
+  )
+}
+
+$packerObj.provisioners = @($shutdownProv)
 $packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
-Write-Host 'Removed all in-guest provisioners.' -ForegroundColor Green
+Write-Host 'Injected forced shutdown provisioner; all others removed.' -ForegroundColor Green
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 7) Clean prior Packer output & build
@@ -112,11 +122,11 @@ Write-Host "Building win2022-$GuiOrCore.json…" -ForegroundColor Cyan
    -var "iso_checksum=$isoChecksumVar" `
    "win2022-$GuiOrCore.json"
 if ($LASTEXITCODE -ne 0) { Write-Error 'Packer build failed.'; exit 1 }
-Write-Host 'Packer build succeeded.' -ForegroundColor Green
+Write-Host 'Packer build succeeded and VM has been powered off.' -ForegroundColor Green
 Pop-Location
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 8) Start VMware REST API daemon
+# 8) Start VMware REST API
 # ──────────────────────────────────────────────────────────────────────────────
 Write-Host 'Starting VMware REST API daemon…' -ForegroundColor Cyan
 $vmrestExe = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe'
@@ -125,14 +135,10 @@ Start-Process -FilePath $vmrestExe -ArgumentList '-b' -WindowStyle Hidden
 Start-Sleep -Seconds 5
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 9) Update terraform.tfvars (escaping backslashes) and run Terraform
+# 9) Update terraform.tfvars (escaping backslashes) and run Terraform if requested
 # ──────────────────────────────────────────────────────────────────────────────
-# Use the existing variables.tf and main.tf in the repo root
 Set-Location $scriptRoot
-
-# Escape backslashes for HCL string
 $escapedPath = $vmPathInput -replace '\\','\\\\'
-
 @"
 vmrest_user     = "vmrest"
 vmrest_password = "Cyberark1"
@@ -143,7 +149,6 @@ vm_memory       = 2048
 vm_path         = "$escapedPath"
 "@ | Set-Content -Path (Join-Path $scriptRoot 'terraform.tfvars') -Encoding ASCII
 
-# Run Terraform only if requested
 if ($createVault) {
   Write-Host 'Initializing Terraform…' -ForegroundColor Cyan
   terraform init -upgrade
@@ -153,7 +158,7 @@ if ($createVault) {
   terraform apply -auto-approve tfplan
   Write-Host '✅ CyberArk-Vault VM created!' -ForegroundColor Green
 } else {
-  Write-Host '⚠️  Skipping Terraform deployment (you chose No).' -ForegroundColor Yellow
+  Write-Host '⚠️  Skipped Terraform deployment of Vault.' -ForegroundColor Yellow
 }
 
-Write-Host 'All done! Base image built and Terraform run as requested.' -ForegroundColor Green
+Write-Host 'All done! Base image is built and VM halted as requested.' -ForegroundColor Green
