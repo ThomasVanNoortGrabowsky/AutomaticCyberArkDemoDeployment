@@ -1,16 +1,8 @@
 <#
   Create-Servers.ps1
   -------------------
-  Automated CyberArk lab using eaksel/packer-Win2022 templates:
-    1) Clone/update packer-Win2022
-    2) Ensure Packer installed locally (v1.11.2)
-    3) Prompt for local Windows Server 2022 Eval ISO path
-    4) Copy official autounattend.xml for GUI/Core UEFI builds
-    5) Install VMware Packer plugin
-    6) Inject only WinRM provisioner into Packer JSON
-    7) Clean previous Packer output (force delete) and build VM image via Packer
-    8) Start VMware REST API daemon
-    9) Post-build provisioning: Terraform
+  Automated CyberArk lab using eaksel/packer-Win2022 templates,
+  but **removing all Windows Update steps** so the build won't hang.
 #>
 
 [CmdletBinding()]
@@ -25,7 +17,9 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
 # 1) Clone or update packer-Win2022 templates
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Write-Error 'Git required.'; exit 1 }
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+  Write-Error 'Git required.'; exit 1
+}
 $packerDir = Join-Path $scriptRoot 'packer-Win2022'
 if (Test-Path $packerDir) {
   Write-Host 'Updating packer-Win2022 templates...' -ForegroundColor Cyan
@@ -42,7 +36,8 @@ if (-not (Test-Path $packerExe)) {
   Write-Host 'Downloading Packer v1.11.2...' -ForegroundColor Cyan
   New-Item -Path $packerBin -ItemType Directory -Force | Out-Null
   $zip = Join-Path $packerBin 'packer.zip'
-  Invoke-WebRequest -Uri 'https://releases.hashicorp.com/packer/1.11.2/packer_1.11.2_windows_amd64.zip' `
+  Invoke-WebRequest `
+    -Uri 'https://releases.hashicorp.com/packer/1.11.2/packer_1.11.2_windows_amd64.zip' `
     -OutFile $zip -UseBasicParsing
   Expand-Archive -Path $zip -DestinationPath $packerBin -Force
   Remove-Item $zip
@@ -51,7 +46,9 @@ if (-not (Test-Path $packerExe)) {
 $env:PATH = "$packerBin;$env:PATH"
 
 # 3) Validate local ISO path
-if (-not (Test-Path $IsoPath)) { Write-Error "ISO not found at path: $IsoPath"; exit 1 }
+if (-not (Test-Path $IsoPath)) {
+  Write-Error "ISO not found at path: $IsoPath"; exit 1
+}
 $checksum       = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
 $isoUrlVar      = "file:///$($IsoPath.Replace('\','/'))"
 $isoChecksumVar = "sha256:$checksum"
@@ -59,7 +56,9 @@ $isoChecksumVar = "sha256:$checksum"
 # 4) Copy autounattend.xml
 $src  = Join-Path $packerDir "scripts\uefi\$GuiOrCore\autounattend.xml"
 $dest = Join-Path $scriptRoot 'Autounattend.xml'
-if (-not (Test-Path $src)) { Write-Error "Template not found: $src"; exit 1 }
+if (-not (Test-Path $src)) {
+  Write-Error "Template not found: $src"; exit 1
+}
 Copy-Item -Path $src -Destination $dest -Force
 Write-Host "Copied autounattend.xml for '$GuiOrCore' build to $dest" -ForegroundColor Green
 
@@ -68,11 +67,11 @@ Push-Location $packerDir
 Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
 & $packerExe plugins install github.com/hashicorp/vmware | Write-Host
 
-# 6) Inject only WinRM provisioner into Packer JSON
+# 6) Inject WinRM provisioner & strip out all win-update steps
 $jsonPath  = Join-Path $packerDir "win2022-$GuiOrCore.json"
 $packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
 
-# WinRM provisioner using PS remoting & WSMan drive
+# Define our WinRM inline provisioner
 $winrmProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
@@ -85,32 +84,44 @@ $winrmProv = [PSCustomObject]@{
   )
 }
 
-if (-not $packerObj.provisioners) {
-  $packerObj | Add-Member -MemberType NoteProperty -Name provisioners -Value @()
+# Filter out any existing provisioning blocks that run 'scripts/win-update.ps1'
+# and also drop the windows-restart immediately after each.
+$origProv = $packerObj.provisioners
+$newProv  = @()
+for ($i = 0; $i -lt $origProv.Count; $i++) {
+  $p = $origProv[$i]
+  if ($p.scripts -and $p.scripts -contains 'scripts/win-update.ps1') {
+    # skip this update step
+    # if next block is a restart, skip that too
+    if ($i + 1 -lt $origProv.Count -and $origProv[$i+1].type -eq 'windows-restart') {
+      $i++
+    }
+    continue
+  }
+  $newProv += $p
 }
 
-# Replace any existing WinRM steps with our new block
-$otherProv = $packerObj.provisioners | Where-Object {
-  $_.inline -and (-not ([string]::Join("`n", $_.inline) -match '\bwinrm\b'))
-}
-$packerObj.provisioners = @($winrmProv) + $otherProv
+# Prepend our WinRM provisioner
+$packerObj.provisioners = @($winrmProv) + $newProv
 
+# Write the modified JSON back
 $packerObj |
   ConvertTo-Json -Depth 10 |
   Set-Content -Path $jsonPath -Encoding ASCII
-Write-Host 'Injected WinRM provisioner into Packer JSON.' -ForegroundColor Green
+
+Write-Host 'Injected WinRM provisioner and removed all win-update steps.' -ForegroundColor Green
 Pop-Location
 
 # 7) Clean previous output and build via Packer
 $outputDir = Join-Path $packerDir 'output-vmware-iso'
 if (Test-Path $outputDir) {
   Write-Host "Removing existing output directory..." -ForegroundColor Yellow
-  Get-Process -Name vmware-vmx -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Get-Process -Name vmware-vmx -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $outputDir
   cmd /c "rd /s /q `"$outputDir`""
 }
 
-# CD into packer dir so relative paths resolve
 Push-Location $packerDir
 Write-Host "Building win2022-$GuiOrCore.json..." -ForegroundColor Cyan
 & $packerExe build `
@@ -118,7 +129,9 @@ Write-Host "Building win2022-$GuiOrCore.json..." -ForegroundColor Cyan
   -var "iso_url=$isoUrlVar" `
   -var "iso_checksum=$isoChecksumVar" `
   "win2022-$GuiOrCore.json"
-if ($LASTEXITCODE -ne 0) { Write-Error 'Packer build failed.'; Pop-Location; exit 1 }
+if ($LASTEXITCODE -ne 0) {
+  Write-Error 'Packer build failed.'; Pop-Location; exit 1
+}
 Write-Host 'Packer build succeeded.' -ForegroundColor Green
 Pop-Location
 
