@@ -74,15 +74,15 @@ Pop-Location
 $jsonPath  = Join-Path $packerDir "win2022-$GuiOrCore.json"
 $packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
 
-# Ensure provisioners array exists
-if (-not $packerObj.provisioners) {
-  $packerObj | Add-Member -MemberType NoteProperty -Name provisioners -Value @()
+# Ensure provisioners array is initialized
+if (-not $packerObj.provisioners) { 
+    $packerObj.provisioners = @()
 }
 
-# Remove any legacy custom WinRM or windows-restart provisioners
-$packerObj.provisioners = $packerObj.provisioners | Where-Object { $_.type -ne 'powershell' -and $_.type -ne 'windows-restart' }
+# Remove any legacy custom WinRM, windows-restart, or windows-update provisioners to avoid duplicates
+$packerObj.provisioners = $packerObj.provisioners | Where-Object { $_.type -ne 'powershell' -and $_.type -ne 'windows-restart' -and $_.type -ne 'windows-update' }
 
-# Prepend WinRM connectivity block
+# Define WinRM connectivity block
 $winrmProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
@@ -92,16 +92,17 @@ $winrmProv = [PSCustomObject]@{
     'netsh advfirewall firewall add rule name="WinRM HTTP" protocol=TCP dir=in localport=5985 action=allow'
   )
 }
-$packerObj.provisioners.Insert(0, $winrmProv)
 
-# Add windows-update provisioner (auto-reboots)
+# Define windows-update provisioner
 $winUpdProv = [PSCustomObject]@{
   type            = 'windows-update'
   search_criteria = 'IsInstalled=0'
   filters         = @('exclude:$_.Title -like "*Preview*"')
   update_limit    = 25
 }
-$packerObj.provisioners.Add($winUpdProv)
+
+# Prepend WinRM provisioner and append windows-update provisioner
+$packerObj.provisioners = @($winrmProv) + $packerObj.provisioners + @($winUpdProv)
 
 # Write JSON back to file
 $packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
