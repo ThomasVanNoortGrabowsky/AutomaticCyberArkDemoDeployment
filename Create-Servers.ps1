@@ -116,12 +116,20 @@ if (Test-Path $outputDir) {
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $outputDir
   cmd /c "rd /s /q `"$outputDir`""
 }
+
+# Switch into Packer template directory for build
+Push-Location $packerDir
 Write-Host "Building win2022-$GuiOrCore.json..." -ForegroundColor Cyan
 & $packerExe build -only=vmware-iso -var "iso_url=$isoUrlVar" -var "iso_checksum=$isoChecksumVar" "win2022-$GuiOrCore.json"
-if ($LASTEXITCODE -ne 0) { Write-Error 'Packer build failed.'; exit 1 }
+if ($LASTEXITCODE -ne 0) {
+  Write-Error 'Packer build failed.'
+  Pop-Location
+  exit 1
+}
 Write-Host 'Packer build succeeded.' -ForegroundColor Green
+Pop-Location
 
-# 8) Start vmrest and run Terraform
+# 8) Start VMware REST API daemon and run Terraform
 Write-Host 'Starting VMware REST API...' -ForegroundColor Yellow
 Stop-Process -Name vmrest -ErrorAction SilentlyContinue
 Start-Process -FilePath 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe' -ArgumentList '-b' -WindowStyle Hidden
