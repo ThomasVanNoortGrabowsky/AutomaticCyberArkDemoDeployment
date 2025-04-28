@@ -113,8 +113,12 @@ if (Test-Path $outputDir) {
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $outputDir
   cmd /c "rd /s /q `"$outputDir`""
 }
-Write-Host "Building win2022-$GuiOrCore.json..." -ForegroundColor Cyan
-& $packerExe build -only=vmware-iso -var "iso_url=$isoUrlVar" -var "iso_checksum=$isoChecksumVar" "win2022-$GuiOrCore.json"
+Write-Host "Building win2022-$GuiOrCore.json with WinRM + update-check provisioners..." -ForegroundColor Cyan
+& $packerExe build `
+    -only=vmware-iso `
+    -var "iso_url=$isoUrlVar" `
+    -var "iso_checksum=$isoChecksumVar" `
+    (Join-Path $packerDir "win2022-$GuiOrCore.json")
 if ($LASTEXITCODE -ne 0) { Write-Error 'Packer build failed.'; exit 1 }
 Write-Host 'Packer build completed successfully.' -ForegroundColor Green
 
