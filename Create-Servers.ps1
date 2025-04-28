@@ -67,7 +67,7 @@ Push-Location $packerDir
 Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
 & $packerExe plugins install github.com/hashicorp/vmware | Write-Host
 
-# 6) Inject WinRM provisioner & strip out all win-update steps
+# 6) Inject only WinRM provisioner into Packer JSON, drop all update+cleanup steps
 $jsonPath  = Join-Path $packerDir "win2022-$GuiOrCore.json"
 $packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
 
@@ -84,33 +84,35 @@ $winrmProv = [PSCustomObject]@{
   )
 }
 
-# Filter out any existing provisioning blocks that run 'scripts/win-update.ps1'
-# and also drop the windows-restart immediately after each.
-$origProv = $packerObj.provisioners
-$newProv  = @()
-for ($i = 0; $i -lt $origProv.Count; $i++) {
-  $p = $origProv[$i]
-  if ($p.scripts -and $p.scripts -contains 'scripts/win-update.ps1') {
-    # skip this update step
-    # if next block is a restart, skip that too
-    if ($i + 1 -lt $origProv.Count -and $origProv[$i+1].type -eq 'windows-restart') {
+# Filter out any provisioners that:
+#  • run win-update.ps1
+#  • run cleanup.ps1
+#  • or are the windows-restart immediately following a win-update or cleanup
+$orig = $packerObj.provisioners
+$new  = @()
+for ($i = 0; $i -lt $orig.Count; $i++) {
+  $p = $orig[$i]
+  $isUpdateOrCleanup = $p.scripts -and (
+    $p.scripts -contains 'scripts/win-update.ps1' -or
+    $p.scripts -contains 'scripts/cleanup.ps1'
+  )
+  if ($isUpdateOrCleanup) {
+    # skip p, and if next is a restart, skip that too
+    if ($i+1 -lt $orig.Count -and $orig[$i+1].type -eq 'windows-restart') {
       $i++
     }
     continue
   }
-  $newProv += $p
+  $new += $p
 }
 
-# Prepend our WinRM provisioner
-$packerObj.provisioners = @($winrmProv) + $newProv
+# Put WinRM first, then everything else
+$packerObj.provisioners = @($winrmProv) + $new
 
-# Write the modified JSON back
-$packerObj |
-  ConvertTo-Json -Depth 10 |
-  Set-Content -Path $jsonPath -Encoding ASCII
+# Write it back
+$packerObj | ConvertTo-Json -Depth 10 | Set-Content $jsonPath -Encoding ASCII
+Write-Host 'Injected WinRM only; removed all win-update & cleanup steps.' -ForegroundColor Green
 
-Write-Host 'Injected WinRM provisioner and removed all win-update steps.' -ForegroundColor Green
-Pop-Location
 
 # 7) Clean previous output and build via Packer
 $outputDir = Join-Path $packerDir 'output-vmware-iso'
