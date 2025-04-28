@@ -7,7 +7,7 @@
     3) Prompt for local Windows Server 2022 Eval ISO path
     4) Copy official autounattend.xml for GUI/Core UEFI builds
     5) Install VMware & windows-update Packer plugins
-    6) Configure WinRM, disable built-in Windows Update, inject windows-update plugin
+    6) Configure WinRM, enable Windows Update, inject windows-update plugin
     7) Clean previous Packer output and build VM image via Packer
     8) Post-build provisioning: vmrest & Terraform
 #>
@@ -69,7 +69,7 @@ Write-Host 'Installing windows-update Packer plugin...' -ForegroundColor Cyan
 & $packerExe plugins install rgl/windows-update | Out-Null
 Pop-Location
 
-# 6) Configure WinRM, disable built-in Windows Update, inject windows-update plugin
+# 6) Configure WinRM, enable Windows Update, inject windows-update plugin
 $jsonPath  = Join-Path $packerDir "win2022-$GuiOrCore.json"
 $packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
 
@@ -84,12 +84,12 @@ $winrmProv = [PSCustomObject]@{
   )
 }
 
-# Disable Windows Update service to prevent hanging install
-$disableWUProv = [PSCustomObject]@{
+# Ensure Windows Update service is running for the plugin
+$enableWUProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
-    'Stop-Service wuauserv -Force',
-    'Set-Service wuauserv -StartupType Disabled'
+    'Set-Service wuauserv -StartupType Automatic',
+    'Start-Service wuauserv'
   )
 }
 
@@ -101,14 +101,15 @@ $winUpdProv = [PSCustomObject]@{
   update_limit    = 25
 }
 
-# Original provisioners
+# Original provisioners from template
 $origProv = $packerObj.provisioners
 if (-not $origProv) { $origProv = @() }
 
-# Build new provisioner list: start with WinRM and disableWU block
-$newProv = @($winrmProv, $disableWUProv)
+# Build new provisioner list: WinRM + enabling WU
+$newProv = @($winrmProv, $enableWUProv)
 $skipRestart = $false
 foreach ($prov in $origProv) {
+  # Skip old win-update script blocks and their restart provs
   if ($prov.type -eq 'powershell' -and $prov.scripts -contains 'scripts/win-update.ps1') {
     $skipRestart = $true; continue
   } elseif ($prov.type -eq 'windows-restart' -and $skipRestart) {
@@ -118,7 +119,7 @@ foreach ($prov in $origProv) {
   }
 }
 
-# Insert windows-update plugin before cleanup if present, else append
+# Insert windows-update plugin before cleanup, else append
 if ($newProv.Count -gt 0 -and $newProv[-1].type -eq 'powershell' -and $newProv[-1].scripts -contains 'scripts/cleanup.ps1') {
   $cleanupProv = $newProv[-1]
   $newProv = $newProv[0..($newProv.Count-2)]
@@ -128,10 +129,10 @@ if ($newProv.Count -gt 0 -and $newProv[-1].type -eq 'powershell' -and $newProv[-
   $newProv += $winUpdProv
 }
 
-# Assign back, filter out any malformed entries, and write JSON
-$packerObj.provisioners = $newProv | Where-Object { $_.type }
+# Assign back, filter out any entries missing type, and write JSON\
+n$packerObj.provisioners = $newProv | Where-Object { $_.type }
 $packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
-Write-Host 'Filtered provisioners without type and updated JSON to use windows-update plugin.' -ForegroundColor Green
+Write-Host 'Updated JSON to use windows-update plugin with service enabled.' -ForegroundColor Green
 
 # 7) Clean previous output and build VM
 $outputDir = Join-Path $packerDir 'output-vmware-iso'
@@ -142,15 +143,11 @@ if (Test-Path $outputDir) {
   cmd /c "rd /s /q `"$outputDir`""
 }
 
-# Switch into Packer template directory for build
+# Build inside Packer directory
 Push-Location $packerDir
 Write-Host "Building win2022-$GuiOrCore.json with windows-update plugin..." -ForegroundColor Cyan
 & $packerExe build -only=vmware-iso -var "iso_url=$isoUrlVar" -var "iso_checksum=$isoChecksumVar" "win2022-$GuiOrCore.json"
-if ($LASTEXITCODE -ne 0) {
-  Write-Error 'Packer build failed.'
-  Pop-Location
-  exit 1
-}
+if ($LASTEXITCODE -ne 0) { Write-Error 'Packer build failed.'; Pop-Location; exit 1 }
 Write-Host 'Packer build completed successfully.' -ForegroundColor Green
 Pop-Location
 
