@@ -137,8 +137,8 @@ if ($newProv.Count -gt 0 -and $newProv[-1].type -eq 'powershell' -and $newProv[-
   $newProv += $winUpdProv
 }
 
-# Assign back, filter out any entries missing type, and write JSON\
-n$packerObj.provisioners = $newProv | Where-Object { $_.type }
+# Assign back, filter out any entries missing type, and write JSON
+$packerObj.provisioners = $newProv | Where-Object { $_.type }
 $packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
 Write-Host 'Updated JSON to use windows-update plugin with service enabled.' -ForegroundColor Green
 
