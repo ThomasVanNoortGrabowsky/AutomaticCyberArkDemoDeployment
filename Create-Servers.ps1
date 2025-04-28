@@ -7,7 +7,7 @@
     3) Prompt for local Windows Server 2022 Eval ISO path
     4) Copy official autounattend.xml for GUI/Core UEFI builds
     5) Install VMware & windows-update Packer plugins
-    6) Stop built‑in Windows Update and/or inject "windows-update" provisioner
+    6) Stop built-in Windows Update and/or inject "windows-update" provisioner
     7) Clean previous Packer output and build VM image via Packer
     8) Post-build provisioning: vmrest & Terraform
 #>
@@ -67,15 +67,12 @@ Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
 & $packerExe plugins install github.com/hashicorp/vmware | Write-Host
 
 Write-Host 'Installing windows-update Packer plugin...' -ForegroundColor Cyan
-& $packerExe plugins install rgl/windows-update | Write-Host
+& $packerExe plugins install github.com/rgl/windows-update | Write-Host
 Pop-Location
 
 # 6) Modify template to use windows-update instead of custom script
-#    Also disable built-in Windows Update to avoid conflicts
 $jsonPath = Join-Path $packerDir "win2022-$GuiOrCore.json"
 $packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
-# Disable built-in updates in unattend (optional)
-# Stop-Service wuauserv -Force; Set-Service wuauserv -StartupType Disabled
 
 # Remove existing custom WinRM/install provisioners
 $packerObj.provisioners = $packerObj.provisioners | Where-Object { $_.type -ne 'powershell' -and $_.type -ne 'windows-restart' }
@@ -103,8 +100,8 @@ $winUpdProv = [PSCustomObject]@{
 }
 $packerObj.provisioners.Add($winUpdProv)
 
-# Write changes back
-toJson $packerObj | Set-Content -Path $jsonPath -Encoding ASCII
+# Write changes back\
+n$packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
 Write-Host 'Updated JSON to use windows-update plugin.' -ForegroundColor Green
 
 # 7) Clean previous output and Build VM image via Packer
