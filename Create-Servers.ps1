@@ -7,7 +7,7 @@
     3) Prompt for local Windows Server 2022 Eval ISO path
     4) Copy official autounattend.xml for GUI/Core UEFI builds
     5) Install VMware & windows-update Packer plugins
-    6) Configure WinRM, ensure "windows-update" provisioner array exists, inject or replace update logic
+    6) Configure WinRM, disable built-in Windows Update, inject windows-update plugin
     7) Clean previous Packer output and build VM image via Packer
     8) Post-build provisioning: vmrest & Terraform
 #>
@@ -23,8 +23,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
-# 1) Clone or update packer-Win2022 templates
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Write-Error 'Git required.'; exit 1 }
+# 1) Clone/update packer-Win2022 templates\if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Write-Error 'Git required.'; exit 1 }
 $packerDir = Join-Path $scriptRoot 'packer-Win2022'
 if (Test-Path $packerDir) {
   Write-Host 'Updating packer-Win2022 templates...' -ForegroundColor Cyan
@@ -41,7 +40,7 @@ if (-not (Test-Path $packerExe)) {
   Write-Host 'Downloading Packer v1.11.2...' -ForegroundColor Cyan
   New-Item -Path $packerBin -ItemType Directory -Force | Out-Null
   $zip = Join-Path $packerBin 'packer.zip'
-  Invoke-WebRequest -Uri 'https://releases.hashicorp.com/packer/1.11.2/packer_1.11.2_windows_amd64.zip' -OutFile $zip -UseBasicParsing
+  Invoke-WebRequest -Uri 'https://releases.hashicorp.com/packer/1.11.2/packer_1.11.2_windows_amd64.zip' -OutFile $zip
   Expand-Archive -Path $zip -DestinationPath $packerBin -Force
   Remove-Item $zip
   Write-Host "-> Packer installed at $packerExe" -ForegroundColor Green
@@ -64,54 +63,80 @@ Write-Host "Copied autounattend.xml for '$GuiOrCore' build to $dest" -Foreground
 # 5) Install Packer plugins (VMware + windows-update)
 Push-Location $packerDir
 Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
-& $packerExe plugins install github.com/hashicorp/vmware | Write-Host
+& $packerExe plugins install github.com/hashicorp/vmware | Out-Null
 
 Write-Host 'Installing windows-update Packer plugin...' -ForegroundColor Cyan
-& $packerExe plugins install github.com/rgl/windows-update | Write-Host
+& $packerExe plugins install rgl/windows-update | Out-Null
 Pop-Location
 
-# 6) Modify template to use windows-update plugin
+# 6) Configure WinRM, disable built-in Windows Update, inject windows-update plugin
 $jsonPath  = Join-Path $packerDir "win2022-$GuiOrCore.json"
 $packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
-
-# Ensure provisioners array is initialized
-if (-not $packerObj.provisioners) { 
-    $packerObj.provisioners = @()
-}
-
-# Remove any legacy custom WinRM, windows-restart, or windows-update provisioners to avoid duplicates
-$packerObj.provisioners = $packerObj.provisioners | Where-Object { $_.type -ne 'powershell' -and $_.type -ne 'windows-restart' -and $_.type -ne 'windows-update' }
 
 # Define WinRM connectivity block
 $winrmProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
     'winrm quickconfig -q',
-    'winrm set winrm/config/service/auth @{Basic="true"}',
-    'winrm set winrm/config/service @{AllowUnencrypted="true"}',
-    'netsh advfirewall firewall add rule name="WinRM HTTP" protocol=TCP dir=in localport=5985 action=allow'
+    'winrm set winrm/config/service/auth @{Basic=''true''}',
+    'winrm set winrm/config/service @{AllowUnencrypted=''true''}',
+    'netsh advfirewall firewall add rule name=''WinRM HTTP'' protocol=TCP dir=in localport=5985 action=allow'
   )
 }
 
-# Define windows-update provisioner
+# Disable Windows Update service to prevent hanging install
+$disableWUProv = [PSCustomObject]@{
+  type   = 'powershell'
+  inline = @(
+    'Stop-Service wuauserv -Force',
+    'Set-Service wuauserv -StartupType Disabled'
+  )
+}
+
+# Define windows-update plugin provisioner
 $winUpdProv = [PSCustomObject]@{
   type            = 'windows-update'
   search_criteria = 'IsInstalled=0'
-  filters         = @('exclude:$_.Title -like "*Preview*"')
+  filters         = @('exclude:$_.Title -like ''*Preview*''')
   update_limit    = 25
 }
 
-# Prepend WinRM provisioner and append windows-update provisioner
-$packerObj.provisioners = @($winrmProv) + $packerObj.provisioners + @($winUpdProv)
+# Original provisioners
+$origProv = $packerObj.provisioners
+if (-not $origProv) { $origProv = @() }
 
-# Write JSON back to file
+# Build new provisioner list: start with WinRM and disableWU block
+$newProv = @($winrmProv, $disableWUProv)
+$skipRestart = $false
+foreach ($prov in $origProv) {
+  if ($prov.type -eq 'powershell' -and $prov.scripts -contains 'scripts/win-update.ps1') {
+    $skipRestart = $true; continue
+  } elseif ($prov.type -eq 'windows-restart' -and $skipRestart) {
+    $skipRestart = $false; continue
+  } else {
+    $newProv += $prov
+  }
+}
+
+# Insert windows-update plugin before cleanup if present, else append
+if ($newProv.Count -gt 0 -and $newProv[-1].type -eq 'powershell' -and $newProv[-1].scripts -contains 'scripts/cleanup.ps1') {
+  $cleanupProv = $newProv[-1]
+  $newProv = $newProv[0..($newProv.Count-2)]
+  $newProv += $winUpdProv
+  $newProv += $cleanupProv
+} else {
+  $newProv += $winUpdProv
+}
+
+# Assign back and write JSON
+$packerObj.provisioners = $newProv
 $packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
 Write-Host 'Updated JSON to use windows-update plugin.' -ForegroundColor Green
 
 # 7) Clean previous output and build VM
 $outputDir = Join-Path $packerDir 'output-vmware-iso'
 if (Test-Path $outputDir) {
-  Write-Host "Removing existing output: $outputDir" -ForegroundColor Yellow
+  Write-Host "Force removing existing output directory: $outputDir" -ForegroundColor Yellow
   Get-Process -Name vmware-vmx -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $outputDir
   cmd /c "rd /s /q `"$outputDir`""
@@ -119,18 +144,18 @@ if (Test-Path $outputDir) {
 
 # Switch into Packer template directory for build
 Push-Location $packerDir
-Write-Host "Building win2022-$GuiOrCore.json..." -ForegroundColor Cyan
+Write-Host "Building win2022-$GuiOrCore.json with windows-update plugin..." -ForegroundColor Cyan
 & $packerExe build -only=vmware-iso -var "iso_url=$isoUrlVar" -var "iso_checksum=$isoChecksumVar" "win2022-$GuiOrCore.json"
 if ($LASTEXITCODE -ne 0) {
   Write-Error 'Packer build failed.'
   Pop-Location
   exit 1
 }
-Write-Host 'Packer build succeeded.' -ForegroundColor Green
+Write-Host 'Packer build completed successfully.' -ForegroundColor Green
 Pop-Location
 
-# 8) Start VMware REST API daemon and run Terraform
-Write-Host 'Starting VMware REST API...' -ForegroundColor Yellow
+# 8) Start VMware REST API daemon & Terraform
+Write-Host 'Starting VMware REST API daemon...' -ForegroundColor Yellow
 Stop-Process -Name vmrest -ErrorAction SilentlyContinue
 Start-Process -FilePath 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe' -ArgumentList '-b' -WindowStyle Hidden
 Start-Sleep -Seconds 5
@@ -138,9 +163,9 @@ Start-Sleep -Seconds 5
 Push-Location (Join-Path $scriptRoot 'terraform')
 Write-Host 'Initializing Terraform...' -ForegroundColor Cyan
 terraform init -upgrade | Write-Host
-Write-Host 'Planning Terraform...' -ForegroundColor Cyan
+Write-Host 'Planning Terraform deployment...' -ForegroundColor Cyan
 terraform plan -out=tfplan | Write-Host
-Write-Host 'Applying Terraform...' -ForegroundColor Cyan
+Write-Host 'Applying Terraform deployment...' -ForegroundColor Cyan
 terraform apply -auto-approve tfplan | Write-Host
 Pop-Location
 
