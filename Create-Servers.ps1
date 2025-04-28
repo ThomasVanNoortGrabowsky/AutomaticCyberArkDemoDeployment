@@ -84,14 +84,22 @@ $winrmProv = [PSCustomObject]@{
   )
 }
 
-# Ensure Windows Update service is running for the plugin
+# Ensure Windows Update and dependencies are running for the plugin
 $enableWUProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
-    'Set-Service wuauserv -StartupType Automatic',
+    # Enable and start Background Intelligent Transfer Service (required by Windows Update)
+    'sc.exe config bits start= delayed-auto',
+    'Start-Service bits',
+    # Enable and start Cryptographic Services (required by Windows Update)
+    'sc.exe config cryptsvc start= auto',
+    'Start-Service cryptsvc',
+    # Enable and start Windows Update service
+    'sc.exe config wuauserv start= auto',
     'Start-Service wuauserv'
   )
 }
+
 
 # Define windows-update plugin provisioner
 $winUpdProv = [PSCustomObject]@{
