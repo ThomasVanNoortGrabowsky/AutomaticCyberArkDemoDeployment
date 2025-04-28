@@ -84,18 +84,17 @@ $winrmProv = [PSCustomObject]@{
   )
 }
 
-# Update-check provisioner: enable/update services, then COM search
+# Update-check provisioner: enable services, then COM search
 $updateCheckProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
-    # ensure Windows Update agent & dependencies are enabled
     'foreach ($svc in "wuauserv","bits","cryptsvc","msiserver") {',
     '  Set-Service -Name $svc -StartupType Manual -ErrorAction Stop',
     '  if ((Get-Service -Name $svc).Status -ne "Running") { Start-Service -Name $svc -ErrorAction Stop }',
     '}',
-    # COM-based update search
     '$searcher = New-Object -ComObject Microsoft.Update.Searcher',
-    '$results  = $searcher.Search("IsInstalled=0 and Type=\'Software\'")',
+    # Note: double '' around Software to escape inside single-quoted string
+    '$results  = $searcher.Search("IsInstalled=0 and Type=''Software''")',
     '$pending  = $results.Updates.Count',
     'if ($pending -gt 0) {',
     '  Write-Error "There are $pending pending updates. Failing build."',
@@ -109,7 +108,7 @@ if (-not $packerObj.provisioners) {
   $packerObj | Add-Member -MemberType NoteProperty -Name provisioners -Value @()
 }
 
-# Prepend WinRM, then any existing, then the update-check
+# Prepend WinRM, then existing, then the update-check
 $packerObj.provisioners = @($winrmProv) + $packerObj.provisioners + @($updateCheckProv)
 
 $packerObj |
@@ -127,7 +126,7 @@ if (Test-Path $outputDir) {
   cmd /c "rd /s /q `"$outputDir`""
 }
 
-# CD into packer directory so floppy_files etc. resolve
+# CD into packer dir so paths resolve
 Push-Location $packerDir
 Write-Host "Building win2022-$GuiOrCore.json with WinRM + update-check provisioners..." -ForegroundColor Cyan
 & $packerExe build `
