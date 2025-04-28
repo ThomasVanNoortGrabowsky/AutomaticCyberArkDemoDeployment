@@ -7,8 +7,8 @@
     3) Prompt for local Windows Server 2022 Eval ISO path
     4) Copy official autounattend.xml for GUI/Core UEFI builds
     5) Install VMware Packer plugin
-    6) Inject WinRM + Update-check provisioners into Packer JSON
-    7) Clean previous Packer output (force delete) and build VM image via Packer
+    6) Inject WinRM + Update-check provisioners into Packer JSON (and strip out old winrm CLI calls)
+    7) Clean previous Packer output and build VM image
     8) Start VMware REST API daemon
     9) Post-build provisioning: Terraform
 #>
@@ -24,7 +24,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
-# 1) Clone or update packer-Win2022 templates
+# 1) Clone or update packer-Win2022
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Write-Error 'Git required.'; exit 1 }
 $packerDir = Join-Path $scriptRoot 'packer-Win2022'
 if (Test-Path $packerDir) {
@@ -42,7 +42,8 @@ if (-not (Test-Path $packerExe)) {
   Write-Host 'Downloading Packer v1.11.2...' -ForegroundColor Cyan
   New-Item -Path $packerBin -ItemType Directory -Force | Out-Null
   $zip = Join-Path $packerBin 'packer.zip'
-  Invoke-WebRequest -Uri 'https://releases.hashicorp.com/packer/1.11.2/packer_1.11.2_windows_amd64.zip' -OutFile $zip -UseBasicParsing
+  Invoke-WebRequest -Uri 'https://releases.hashicorp.com/packer/1.11.2/packer_1.11.2_windows_amd64.zip' `
+    -OutFile $zip -UseBasicParsing
   Expand-Archive -Path $zip -DestinationPath $packerBin -Force
   Remove-Item $zip
   Write-Host "-> Packer installed at $packerExe" -ForegroundColor Green
@@ -62,16 +63,16 @@ if (-not (Test-Path $src)) { Write-Error "Template not found: $src"; exit 1 }
 Copy-Item -Path $src -Destination $dest -Force
 Write-Host "Copied autounattend.xml for '$GuiOrCore' build to $dest" -ForegroundColor Green
 
-# 5) Install VMware plugin for Packer
+# 5) Install VMware Packer plugin
 Push-Location $packerDir
 Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
 & $packerExe plugins install github.com/hashicorp/vmware | Write-Host
 
-# 6) Inject WinRM + Update-check provisioners into Packer JSON
+# 6) Inject WinRM + Update-check provisioners (and strip out old winrm CLI calls)
 $jsonPath  = Join-Path $packerDir "win2022-$GuiOrCore.json"
 $packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
 
-# WinRM provisioner using PS remoting & WSMan drive
+# Our new WinRM provisioner (using PS remoting & WSMan drive)
 $winrmProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
@@ -84,7 +85,7 @@ $winrmProv = [PSCustomObject]@{
   )
 }
 
-# Update-check provisioner: enable services, then COM search
+# Our update-check provisioner (COM-based search)
 $updateCheckProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
@@ -93,7 +94,6 @@ $updateCheckProv = [PSCustomObject]@{
     '  if ((Get-Service -Name $svc).Status -ne "Running") { Start-Service -Name $svc -ErrorAction Stop }',
     '}',
     '$searcher = New-Object -ComObject Microsoft.Update.Searcher',
-    # Note: double '' around Software to escape inside single-quoted string
     '$results  = $searcher.Search("IsInstalled=0 and Type=''Software''")',
     '$pending  = $results.Updates.Count',
     'if ($pending -gt 0) {',
@@ -104,38 +104,43 @@ $updateCheckProv = [PSCustomObject]@{
   )
 }
 
-if (-not $packerObj.provisioners) {
-  $packerObj | Add-Member -MemberType NoteProperty -Name provisioners -Value @()
+# Filter out any existing provisioners that invoke the winrm CLI
+$existing = @()
+if ($packerObj.provisioners) {
+  $existing = $packerObj.provisioners | Where-Object {
+    if ($_.inline) {
+      -not ([string]::Join("`n", $_.inline) -match '\bwinrm\b')
+    } else { $true }
+  }
 }
 
-# Prepend WinRM, then existing, then the update-check
-$packerObj.provisioners = @($winrmProv) + $packerObj.provisioners + @($updateCheckProv)
+# Reassemble: our WinRM → existing → update-check
+$packerObj.provisioners = @($winrmProv) + $existing + @($updateCheckProv)
 
-$packerObj |
-  ConvertTo-Json -Depth 10 |
-  Set-Content -Path $jsonPath -Encoding ASCII
-Write-Host 'Injected WinRM and Update-check provisioners into Packer JSON.' -ForegroundColor Green
+# Write JSON back
+$packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
+Write-Host 'Injected new WinRM & update-check provisioners (old winrm CLI calls removed).' -ForegroundColor Green
 Pop-Location
 
-# 7) Clean previous output and Build VM image via Packer
+# 7) Clean previous output and build via Packer
 $outputDir = Join-Path $packerDir 'output-vmware-iso'
 if (Test-Path $outputDir) {
-  Write-Host "Force removing existing output directory: $outputDir" -ForegroundColor Yellow
+  Write-Host "Removing existing output directory..." -ForegroundColor Yellow
   Get-Process -Name vmware-vmx -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $outputDir
   cmd /c "rd /s /q `"$outputDir`""
 }
 
-# CD into packer dir so paths resolve
+# CD into packer dir so relative paths resolve
 Push-Location $packerDir
-Write-Host "Building win2022-$GuiOrCore.json with WinRM + update-check provisioners..." -ForegroundColor Cyan
+Write-Host "Building win2022-$GuiOrCore.json..." -ForegroundColor Cyan
 & $packerExe build `
   -only=vmware-iso `
   -var "iso_url=$isoUrlVar" `
   -var "iso_checksum=$isoChecksumVar" `
   "win2022-$GuiOrCore.json"
 if ($LASTEXITCODE -ne 0) { Write-Error 'Packer build failed.'; Pop-Location; exit 1 }
-Write-Host 'Packer build completed successfully.' -ForegroundColor Green
+Write-Host 'Packer build succeeded.' -ForegroundColor Green
 Pop-Location
 
 # 8) Start VMware REST API daemon
