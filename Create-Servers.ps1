@@ -128,10 +128,10 @@ if ($newProv.Count -gt 0 -and $newProv[-1].type -eq 'powershell' -and $newProv[-
   $newProv += $winUpdProv
 }
 
-# Assign back and write JSON
-$packerObj.provisioners = $newProv
+# Assign back, filter out any malformed entries, and write JSON
+$packerObj.provisioners = $newProv | Where-Object { $_.type }
 $packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
-Write-Host 'Updated JSON to use windows-update plugin.' -ForegroundColor Green
+Write-Host 'Filtered provisioners without type and updated JSON to use windows-update plugin.' -ForegroundColor Green
 
 # 7) Clean previous output and build VM
 $outputDir = Join-Path $packerDir 'output-vmware-iso'
