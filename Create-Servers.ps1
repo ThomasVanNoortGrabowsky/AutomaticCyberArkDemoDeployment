@@ -71,14 +71,16 @@ Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
 $jsonPath  = Join-Path $packerDir "win2022-$GuiOrCore.json"
 $packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
 
-# WinRM provisioner
+# --- New WinRM provisioner using PS remoting & WSMan drive ---
 $winrmProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
-    'winrm quickconfig -q',
-    'winrm set winrm/config/service/auth @{Basic="true"}',
-    'winrm set winrm/config/service @{AllowUnencrypted="true"}',
-    'netsh advfirewall firewall add rule name="WinRM HTTP" protocol=TCP dir=in localport=5985 action=allow'
+    'Enable-PSRemoting -Force',
+    'Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true',
+    'Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true',
+    'if (-not (Get-NetFirewallRule -Name "WINRM-HTTP-In" -ErrorAction SilentlyContinue)) {',
+    '  New-NetFirewallRule -Name "WINRM-HTTP-In" -DisplayName "WinRM HTTP-In" -Protocol TCP -LocalPort 5985 -Action Allow',
+    '}'
   )
 }
 
@@ -98,6 +100,7 @@ if (-not $packerObj.provisioners) {
   $packerObj | Add-Member -MemberType NoteProperty -Name provisioners -Value @()
 }
 
+# Prepend WinRM, then any existing, then the update-check
 $packerObj.provisioners = @($winrmProv) + $packerObj.provisioners + @($updateCheckProv)
 
 $packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
@@ -113,14 +116,14 @@ if (Test-Path $outputDir) {
   cmd /c "rd /s /q `"$outputDir`""
 }
 
-# → CD into packer-Win2022 so all relative paths resolve correctly
+# CD into packer directory so floppy_files etc. all resolve
 Push-Location $packerDir
 Write-Host "Building win2022-$GuiOrCore.json with WinRM + update-check provisioners..." -ForegroundColor Cyan
 & $packerExe build `
-    -only=vmware-iso `
-    -var "iso_url=$isoUrlVar" `
-    -var "iso_checksum=$isoChecksumVar" `
-    "win2022-$GuiOrCore.json"
+  -only=vmware-iso `
+  -var "iso_url=$isoUrlVar" `
+  -var "iso_checksum=$isoChecksumVar" `
+  "win2022-$GuiOrCore.json"
 if ($LASTEXITCODE -ne 0) { Write-Error 'Packer build failed.'; Pop-Location; exit 1 }
 Write-Host 'Packer build completed successfully.' -ForegroundColor Green
 Pop-Location
