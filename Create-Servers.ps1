@@ -7,8 +7,8 @@
     3) Prompt for local Windows Server 2022 Eval ISO path
     4) Copy official autounattend.xml for GUI/Core UEFI builds
     5) Install VMware Packer plugin
-    6) Inject WinRM + Update-check provisioners into Packer JSON (and strip out old winrm CLI calls)
-    7) Clean previous Packer output and build VM image
+    6) Inject only WinRM provisioner into Packer JSON
+    7) Clean previous Packer output (force delete) and build VM image via Packer
     8) Start VMware REST API daemon
     9) Post-build provisioning: Terraform
 #>
@@ -24,7 +24,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 
-# 1) Clone or update packer-Win2022
+# 1) Clone or update packer-Win2022 templates
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Write-Error 'Git required.'; exit 1 }
 $packerDir = Join-Path $scriptRoot 'packer-Win2022'
 if (Test-Path $packerDir) {
@@ -63,16 +63,16 @@ if (-not (Test-Path $src)) { Write-Error "Template not found: $src"; exit 1 }
 Copy-Item -Path $src -Destination $dest -Force
 Write-Host "Copied autounattend.xml for '$GuiOrCore' build to $dest" -ForegroundColor Green
 
-# 5) Install VMware Packer plugin
+# 5) Install VMware plugin for Packer
 Push-Location $packerDir
 Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
 & $packerExe plugins install github.com/hashicorp/vmware | Write-Host
 
-# 6) Inject WinRM + Update-check provisioners (and strip out old winrm CLI calls)
+# 6) Inject only WinRM provisioner into Packer JSON
 $jsonPath  = Join-Path $packerDir "win2022-$GuiOrCore.json"
 $packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
 
-# Our new WinRM provisioner (using PS remoting & WSMan drive)
+# WinRM provisioner using PS remoting & WSMan drive
 $winrmProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
@@ -85,41 +85,20 @@ $winrmProv = [PSCustomObject]@{
   )
 }
 
-# Our update-check provisioner (COM-based search)
-$updateCheckProv = [PSCustomObject]@{
-  type   = 'powershell'
-  inline = @(
-    'foreach ($svc in "wuauserv","bits","cryptsvc","msiserver") {',
-    '  Set-Service -Name $svc -StartupType Manual -ErrorAction Stop',
-    '  if ((Get-Service -Name $svc).Status -ne "Running") { Start-Service -Name $svc -ErrorAction Stop }',
-    '}',
-    '$searcher = New-Object -ComObject Microsoft.Update.Searcher',
-    '$results  = $searcher.Search("IsInstalled=0 and Type=''Software''")',
-    '$pending  = $results.Updates.Count',
-    'if ($pending -gt 0) {',
-    '  Write-Error "There are $pending pending updates. Failing build."',
-    '  exit 1',
-    '}',
-    'Write-Host "All updates installed."'
-  )
+if (-not $packerObj.provisioners) {
+  $packerObj | Add-Member -MemberType NoteProperty -Name provisioners -Value @()
 }
 
-# Filter out any existing provisioners that invoke the winrm CLI
-$existing = @()
-if ($packerObj.provisioners) {
-  $existing = $packerObj.provisioners | Where-Object {
-    if ($_.inline) {
-      -not ([string]::Join("`n", $_.inline) -match '\bwinrm\b')
-    } else { $true }
-  }
+# Replace any existing WinRM steps with our new block
+$otherProv = $packerObj.provisioners | Where-Object {
+  $_.inline -and (-not ([string]::Join("`n", $_.inline) -match '\bwinrm\b'))
 }
+$packerObj.provisioners = @($winrmProv) + $otherProv
 
-# Reassemble: our WinRM → existing → update-check
-$packerObj.provisioners = @($winrmProv) + $existing + @($updateCheckProv)
-
-# Write JSON back
-$packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
-Write-Host 'Injected new WinRM & update-check provisioners (old winrm CLI calls removed).' -ForegroundColor Green
+$packerObj |
+  ConvertTo-Json -Depth 10 |
+  Set-Content -Path $jsonPath -Encoding ASCII
+Write-Host 'Injected WinRM provisioner into Packer JSON.' -ForegroundColor Green
 Pop-Location
 
 # 7) Clean previous output and build via Packer
