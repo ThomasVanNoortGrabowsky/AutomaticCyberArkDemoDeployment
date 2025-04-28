@@ -66,7 +66,7 @@ Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
 & $packerExe plugins install github.com/hashicorp/vmware | Out-Null
 
 Write-Host 'Installing windows-update Packer plugin...' -ForegroundColor Cyan
-& $packerExe plugins install rgl/windows-update | Out-Null
+& $packerExe plugins install github.com/rgl/windows-update | Out-Null
 Pop-Location
 
 # 6) Configure WinRM, enable Windows Update, inject windows-update plugin
@@ -88,17 +88,15 @@ $winrmProv = [PSCustomObject]@{
 $enableWUProv = [PSCustomObject]@{
   type   = 'powershell'
   inline = @(
-    # Enable and start Background Intelligent Transfer Service (required by Windows Update)
-    'sc.exe config bits start= delayed-auto',
-    'Start-Service bits',
-    # Enable and start Cryptographic Services (required by Windows Update)
-    'sc.exe config cryptsvc start= auto',
-    'Start-Service cryptsvc',
-    # Enable and start Windows Update service
-    'sc.exe config wuauserv start= auto',
-    'Start-Service wuauserv'
+    'Set-Service -Name bits -StartupType Automatic',
+    'Start-Service -Name bits',
+    'Set-Service -Name cryptsvc -StartupType Automatic',
+    'Start-Service -Name cryptsvc',
+    'Set-Service -Name wuauserv -StartupType Automatic',
+    'Start-Service -Name wuauserv'
   )
 }
+
 
 
 # Define windows-update plugin provisioner
