@@ -13,30 +13,28 @@
   },
   "builders": [
     {
-      "type":                 "vmware-iso",
-      "guest_os_type":        "windows2019srv-64",
-      "vm_name":              "{{user `vm_name`}}",
-      "boot_wait":            "{{user `boot_wait`}}",
-      "disk_size":            "{{user `disk_size`}}",
-      "disk_type_id":         "0",
-      "headless":             false,
-      "iso_checksum":         "{{user `iso_checksum`}}",
-      "iso_url":              "{{user `iso_url`}}",
-      "communicator":         "winrm",
-      "winrm_username":       "{{user `winrm_username`}}",
-      "winrm_password":       "{{user `winrm_password`}}",
-      "winrm_use_ssl":        true,
-      "winrm_insecure":       true,
-      "winrm_timeout":        "4h",
-      "floppy_files":         ["scripts/bios/gui/autounattend.xml"],
-      "shutdown_command":     "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\"",
-      "shutdown_timeout":     "30m",
-      "skip_compaction":      false,
+      "type":           "vmware-iso",
+      "guest_os_type":  "windows2019srv-64",
+      "vm_name":        "{{user `vm_name`}}",
+      "boot_wait":      "{{user `boot_wait`}}",
+      "disk_size":      "{{user `disk_size`}}",
+      "disk_type_id":   "0",
+      "headless":       false,
+      "iso_checksum":   "{{user `iso_checksum`}}",
+      "iso_url":        "{{user `iso_url`}}",
+      "communicator":   "winrm",
+      "winrm_username": "{{user `winrm_username`}}",
+      "winrm_password": "{{user `winrm_password`}}",
+      "winrm_use_ssl":  true,
+      "winrm_insecure": true,
+      "winrm_timeout":  "4h",
+      "floppy_files":   ["scripts/bios/gui/autounattend.xml"],
+      "skip_compaction": false,
       "vmx_data": {
-        "memsize":            "{{user `memsize`}}",
-        "numvcpus":           "{{user `numvcpus`}}",
-        "virtualHW.version":  "14",
-        "scsi0.virtualDev":   "lsisas1068"
+        "memsize":           "{{user `memsize`}}",
+        "numvcpus":          "{{user `numvcpus`}}",
+        "virtualHW.version": "14",
+        "scsi0.virtualDev":  "lsisas1068"
       }
     },
     {
@@ -56,7 +54,7 @@
       "winrm_insecure":       true,
       "winrm_timeout":        "4h",
       "floppy_files":         ["scripts/bios/gui/autounattend.xml"],
-      "shutdown_command":     "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\"",
+      "shutdown_command":     "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\"", 
       "shutdown_timeout":     "30m",
       "vboxmanage": [
         ["modifyvm", "{{.Name}}", "--memory", "{{user `memsize`}}"],
@@ -85,58 +83,56 @@
       "winrm_insecure":       true,
       "winrm_timeout":        "4h",
       "qemuargs":             [["-cdrom", "{{user `virtio_iso_path`}}"]],
-      "floppy_files":         ["scripts/bios/gui/autounattend.xml"],
-      "shutdown_command":     "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\"",
-      "shutdown_timeout":     "30m"
+      "floppy_files":         ["scripts/bios/gui/autounattend.xml"]
     }
   ],
   "provisioners": [
     {
-      "type":               "powershell",
-      "only":               ["vmware-iso"],
-      "scripts":            ["scripts/vmware-tools.ps1"],
-      "pause_before":       "1m",
-      "valid_exit_codes":   [0, 1, 3010]
+      "type":             "powershell",
+      "only":             ["vmware-iso"],
+      "scripts":          ["scripts/vmware-tools.ps1"],
+      "pause_before":     "1m",
+      "valid_exit_codes": [0, 1, 3010]
     },
     {
-      "type":               "powershell",
-      "only":               ["virtualbox-iso"],
-      "scripts":            ["scripts/virtualbox-guest-additions.ps1"],
-      "pause_before":       "1m",
-      "valid_exit_codes":   [0, 1, 3010]
+      "type":             "powershell",
+      "only":             ["virtualbox-iso"],
+      "scripts":          ["scripts/virtualbox-guest-additions.ps1"],
+      "pause_before":     "1m",
+      "valid_exit_codes": [0, 1, 3010]
     },
     {
-      "type":               "powershell",
-      "scripts":            ["scripts/setup.ps1"],
-      "valid_exit_codes":   [0, 1, 3010]
+      "type":             "powershell",
+      "scripts":          ["scripts/setup.ps1"],
+      "valid_exit_codes": [0, 1, 3010]
     },
     {
-      "type":               "windows-restart",
-      "restart_timeout":    "30m"
+      "type":             "windows-restart",
+      "restart_timeout":  "30m"
     },
     {
-      "type":               "powershell",
-      "scripts":            ["scripts/win-update.ps1"],
-      "valid_exit_codes":   [0, 1, 3010]
+      "type":             "powershell",
+      "scripts":          ["scripts/win-update.ps1"],
+      "valid_exit_codes": [0, 1, 3010]
     },
     {
-      "type":               "windows-restart",
-      "restart_timeout":    "30m"
+      "type":             "windows-restart",
+      "restart_timeout":  "30m"
     },
     {
-      "type":               "powershell",
-      "scripts":            ["scripts/win-update.ps1"],
-      "valid_exit_codes":   [0, 1, 3010]
+      "type":             "powershell",
+      "scripts":          ["scripts/win-update.ps1"],
+      "valid_exit_codes": [0, 1, 3010]
     },
     {
-      "type":               "windows-restart",
-      "restart_timeout":    "30m"
+      "type":             "windows-restart",
+      "restart_timeout":  "30m"
     },
     {
-      "type":               "powershell",
-      "scripts":            ["scripts/cleanup.ps1"],
-      "pause_before":       "1m",
-      "valid_exit_codes":   [0, 1, 3010]
+      "type":             "powershell",
+      "scripts":          ["scripts/cleanup.ps1"],
+      "pause_before":     "1m",
+      "valid_exit_codes": [0, 1, 3010]
     }
   ]
 }
