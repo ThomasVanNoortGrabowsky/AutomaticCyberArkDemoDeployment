@@ -1,9 +1,9 @@
 <#
   Create-Servers.ps1
   -------------------
-  1) Builds a minimal Win2022 VM with Packer (only a forced shutdown).
-  2) Prompts for where to store Terraform VMs and whether to deploy the Vault.
-  3) Updates terraform.tfvars, starts VMREST (with full bootstrap), health-checks it, and runs Terraform.
+  1) Builds a minimal Win2022 VM with Packer.
+  2) Prompts for VM folder & whether to deploy the Vault.
+  3) Starts VMREST (with full bootstrap), health-checks it, then runs Terraform.
 #>
 
 [CmdletBinding()]
@@ -22,7 +22,7 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 # ──────────────────────────────────────────────────────────────────────────────
 $vmPathInput = Read-Host "Enter the folder path where Terraform should create the VM (e.g. C:\VMs\Test)"
 $vaultAnswer = Read-Host "Do you want to deploy the CyberArk Vault VM? (y/n)"
-$createVault = $vaultAnswer.Trim().ToLower().StartsWith('y')
+$createVault  = $vaultAnswer.Trim().ToLower().StartsWith('y')
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1) Clone/update packer-Win2022
@@ -86,33 +86,13 @@ Write-Host 'Installing VMware Packer plugin…' -ForegroundColor Cyan
 Pop-Location
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 6) Strip out all in-guest provisioners and force a shutdown
-# ──────────────────────────────────────────────────────────────────────────────
-$jsonPath  = Join-Path $packerDir "win2022-$GuiOrCore.json"
-$packerObj = Get-Content $jsonPath -Raw | ConvertFrom-Json
-
-$shutdownProv = [PSCustomObject]@{
-  type   = 'powershell'
-  inline = @(
-    'Write-Host "Waiting 5s before shutdown..."',
-    'Start-Sleep -Seconds 5',
-    'shutdown.exe /s /t 0 /f'
-  )
-}
-
-$packerObj.provisioners = @($shutdownProv)
-$packerObj | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding ASCII
-Write-Host 'Injected forced shutdown provisioner; all others removed.' -ForegroundColor Green
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 7) Clean prior Packer output & build
+# 6) Clean prior Packer output & build
 # ──────────────────────────────────────────────────────────────────────────────
 $outputDir = Join-Path $packerDir 'output-vmware-iso'
 if (Test-Path $outputDir) {
   Write-Host 'Removing prior Packer output…' -ForegroundColor Yellow
   Get-Process -Name vmware-vmx -ErrorAction SilentlyContinue | Stop-Process -Force
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $outputDir
-  cmd /c "rd /s /q `"$outputDir`""
 }
 Push-Location $packerDir
 Write-Host "Building win2022-$GuiOrCore.json…" -ForegroundColor Cyan
@@ -126,12 +106,12 @@ Write-Host 'Packer build succeeded and VM has been powered off.' -ForegroundColo
 Pop-Location
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 8) Start VMware REST API (bootstrap + config/key/cert + health check)
+# 7) Start VMware REST API (bootstrap + config/key/cert + health check)
 # ──────────────────────────────────────────────────────────────────────────────
 Write-Host 'Starting VMware REST API daemon…' -ForegroundColor Cyan
 $vmrestExe    = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe'
-$cfgPath      = "$HOME\.vmrestCfg"                     # your config.ini
-$keyFile      = 'workstationapi-key.pem'               # ensure these exist
+$cfgPath      = "$HOME\.vmrestCfg"
+$keyFile      = 'workstationapi-key.pem'
 $certFile     = 'workstationapi-cert.pem'
 $apiPort      = 8697
 
@@ -154,12 +134,12 @@ try {
     -ErrorAction Stop | Out-Null
   Write-Host 'VMREST API is up and responding.' -ForegroundColor Green
 } catch {
-  Write-Error 'ERROR: VMREST API did not respond on /api/vms; aborting.'
+  Write-Error 'ERROR: VMREST API did not respond; aborting.'
   exit 1
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 9) Update terraform.tfvars (escaping backslashes) and run Terraform if requested
+# 8) Update terraform.tfvars & run Terraform if requested
 # ──────────────────────────────────────────────────────────────────────────────
 Set-Location $scriptRoot
 $escapedPath = $vmPathInput -replace '\\','\\\\'
