@@ -4,4 +4,4 @@ vault_image_id  = "thomas"
 app_image_id    = "thomas-app"
 vm_processors   = 2
 vm_memory       = 2048
-vm_path         = "C:\\Users\\<YourName>\\Documents\\Virtual Machines\\TestVM-Terraform"
+vm_path         = "C:\\\\Users\\\\ThomasvanNoort\\\\Documents\\\\Virtual Machines\\\\"

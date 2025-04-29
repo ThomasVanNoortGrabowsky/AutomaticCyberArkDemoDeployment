@@ -54,7 +54,7 @@
       "winrm_insecure":       true,
       "winrm_timeout":        "4h",
       "floppy_files":         ["scripts/bios/gui/autounattend.xml"],
-      "shutdown_command":     "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\"", 
+      "shutdown_command":     "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\"",
       "shutdown_timeout":     "30m",
       "vboxmanage": [
         ["modifyvm", "{{.Name}}", "--memory", "{{user `memsize`}}"],
