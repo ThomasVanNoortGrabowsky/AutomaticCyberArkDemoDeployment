@@ -3,7 +3,7 @@
   -------------------
   1) Builds a minimal Win2022 VM with Packer (only a forced shutdown).
   2) Prompts for where to store Terraform VMs and whether to deploy the Vault.
-  3) Updates terraform.tfvars and runs Terraform.
+  3) Updates terraform.tfvars, starts VMREST (with full bootstrap), health-checks it, and runs Terraform.
 #>
 
 [CmdletBinding()]
@@ -126,13 +126,37 @@ Write-Host 'Packer build succeeded and VM has been powered off.' -ForegroundColo
 Pop-Location
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 8) Start VMware REST API
+# 8) Start VMware REST API (bootstrap + config/key/cert + health check)
 # ──────────────────────────────────────────────────────────────────────────────
 Write-Host 'Starting VMware REST API daemon…' -ForegroundColor Cyan
-$vmrestExe = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe'
+$vmrestExe    = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrest.exe'
+$cfgPath      = "$HOME\.vmrestCfg"                     # your config.ini
+$keyFile      = 'workstationapi-key.pem'               # ensure these exist
+$certFile     = 'workstationapi-cert.pem'
+$apiPort      = 8697
+
 Stop-Process -Name vmrest -ErrorAction SilentlyContinue
-Start-Process -FilePath $vmrestExe -ArgumentList '-b' -WindowStyle Hidden
+
+Start-Process -FilePath $vmrestExe `
+  -ArgumentList @(
+    '-C', $cfgPath,
+    '-k', $keyFile,
+    '-c', $certFile,
+    '-p', $apiPort
+  ) -WindowStyle Hidden
+
 Start-Sleep -Seconds 5
+
+try {
+  Invoke-RestMethod `
+    -Uri "http://127.0.0.1:$apiPort/api/vms" `
+    -Credential (New-Object PSCredential($vmrest_user, (ConvertTo-SecureString $vmrest_password -AsPlainText -Force))) `
+    -ErrorAction Stop | Out-Null
+  Write-Host 'VMREST API is up and responding.' -ForegroundColor Green
+} catch {
+  Write-Error 'ERROR: VMREST API did not respond on /api/vms; aborting.'
+  exit 1
+}
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 9) Update terraform.tfvars (escaping backslashes) and run Terraform if requested
