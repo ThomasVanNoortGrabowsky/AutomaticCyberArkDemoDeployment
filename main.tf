@@ -10,7 +10,9 @@ terraform {
 provider "vmworkstation" {
   user     = var.vmrest_user
   password = var.vmrest_password
-  url      = "http://127.0.0.1:8697"
+  url      = "http://127.0.0.1:8697/api"  # include /api so client hits the correct path
+  https    = false                         # explicit for plain HTTP
+  debug    = true                          # optional, enables verbose logs
 }
 
 resource "vmworkstation_vm" "test_vm" {
