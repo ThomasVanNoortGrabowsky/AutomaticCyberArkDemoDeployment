@@ -8,8 +8,7 @@
     "numvcpus":        "2",
     "vm_name":         "Win2022_GUI",
     "winrm_username":  "Administrator",
-    "winrm_password":  "packer",
-    "virtio_iso_path": "virtio-win-0.1.229.iso"
+    "winrm_password":  "packer"
   },
   "builders": [
     {
@@ -18,7 +17,6 @@
       "vm_name":        "{{user `vm_name`}}",
       "boot_wait":      "{{user `boot_wait`}}",
       "disk_size":      "{{user `disk_size`}}",
-      "disk_type_id":   "0",
       "headless":       false,
       "iso_checksum":   "{{user `iso_checksum`}}",
       "iso_url":        "{{user `iso_url`}}",
@@ -41,21 +39,14 @@
   ],
   "provisioners": [
     {
-      "type":           "powershell",
-      "only":           ["vmware-iso"],
-      "scripts":        ["scripts/vmware-tools.ps1"],
-      "pause_before":   "1m",
+      "type":             "powershell",
+      "scripts":          ["scripts/setup.ps1"],
       "valid_exit_codes": [0, 1, 3010]
     },
     {
-      "type":           "powershell",
-      "scripts":        ["scripts/setup.ps1"],
-      "valid_exit_codes": [0, 1, 3010]
-    },
-    {
-      "type":           "powershell",
-      "scripts":        ["scripts/cleanup.ps1"],
-      "pause_before":   "1m",
+      "type":             "powershell",
+      "scripts":          ["scripts/cleanup.ps1"],
+      "pause_before":     "1m",
       "valid_exit_codes": [0, 1, 3010]
     }
   ]
