@@ -9,11 +9,11 @@ variable "vmrest_password" {
 }
 
 variable "vault_image_id" {
-  type    = string
+  type = string
 }
 
 variable "app_image_id" {
-  type    = string
+  type = string
 }
 
 variable "vm_processors" {
