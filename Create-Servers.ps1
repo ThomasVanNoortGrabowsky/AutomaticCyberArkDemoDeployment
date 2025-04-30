@@ -36,7 +36,7 @@ if (-not (Test-Path $packerExe)) {
 }
 $env:PATH = "$packerBin;$env:PATH"
 
-# 3) Packer build (minimal template)
+# 3) Build minimal image with Packer
 Push-Location (Join-Path $scriptRoot 'packer-Win2022')
 & $packerExe build -only=vmware-iso `
     -var "iso_url=$isoUrl" `
@@ -46,8 +46,9 @@ if ($LASTEXITCODE -ne 0) { Write-Error 'Packer build failed.'; exit 1 }
 Pop-Location
 Write-Host '✅ Packer build complete.' -ForegroundColor Green
 
-# 4) Start VMREST
-.& (Join-Path $scriptRoot 'Start-VMRestDaemon.ps1')
+# 4) Start VMREST daemon
+#    Use the call operator (&) — not .& — per PowerShell invocation rules :contentReference[oaicite:0]{index=0}.
+& (Join-Path $scriptRoot 'Start-VMRestDaemon.ps1')
 
 # 5) Health-check VMREST with credentials
 $cred = New-Object PSCredential('vmrest', (ConvertTo-SecureString 'Cyberark1' -AsPlainText -Force))
@@ -55,7 +56,8 @@ Write-Host 'Checking VMREST API…' -NoNewline
 for ($i=0; $i -lt 10; $i++) {
   try {
     Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Credential $cred -UseBasicParsing -ErrorAction Stop
-    Write-Host ' OK' -ForegroundColor Green; break
+    Write-Host ' OK' -ForegroundColor Green
+    break
   } catch {
     Write-Host -NoNewline '.'; Start-Sleep -Seconds 3
   }
@@ -74,7 +76,7 @@ vm_memory       = 2048
 vm_path         = "$escaped"
 "@ | Set-Content (Join-Path $scriptRoot 'terraform.tfvars') -Encoding ASCII
 
-# 7) Terraform apply
+# 7) Terraform apply (serial to avoid known parallelism crash) :contentReference[oaicite:1]{index=1}
 Push-Location $scriptRoot
 terraform init -upgrade
 terraform apply -auto-approve -parallelism=1
