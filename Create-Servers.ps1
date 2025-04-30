@@ -1,6 +1,6 @@
 <#
-  Create-Servers.ps1 (GUI-only)
-  -----------------------------
+  Create-Servers.ps1
+  ---------------------------------------------
   1) Builds a GUI Win2022 VM with Packer.
   2) Starts and health-checks the VMware REST API.
   3) Runs Terraform to deploy Vault, PVWA, PSM, CPM.
@@ -64,8 +64,8 @@ if ($LASTEXITCODE -ne 0) {
 Pop-Location
 Write-Host '✅ Packer build complete.' -ForegroundColor Green
 
-# 5) Start VMREST daemon
-&amp; (Join-Path $scriptRoot 'Start-VMRestDaemon.ps1')
+# 5) Start VMREST daemon (correct ampersand use)
+& (Join-Path $scriptRoot 'Start-VMRestDaemon.ps1')
 
 # 6) Health-check VMREST API
 $cred = New-Object PSCredential('vmrest', (ConvertTo-SecureString 'Cyberark1' -AsPlainText -Force))
