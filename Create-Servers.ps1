@@ -20,7 +20,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# --- Paths & Credentials ---
+# Paths and creds
 $scriptRoot  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $packerBin   = Join-Path $scriptRoot 'packer-bin'
 $packerExe   = Join-Path $packerBin   'packer.exe'
@@ -32,16 +32,16 @@ $tfvarsFile  = Join-Path $scriptRoot 'terraform.tfvars'
 $vmrestUser  = 'vmrest'
 $vmrestPass  = 'Cyberark1!'
 
-# --- 1) Validate ISO ---
+# 1) Validate ISO
 if (-not (Test-Path $IsoPath)) {
   Write-Error "ISO not found at '$IsoPath'"
   exit 1
 }
 $isoUrl      = "file:///$($IsoPath -replace '\\','/')"
 $isoChecksum = 'sha256:' + (Get-FileHash -Path $IsoPath -Algorithm SHA256).Hash
-Write-Host "ISO validated. Checksum: $isoChecksum" -ForegroundColor Green
+Write-Host "✔ ISO validated. Checksum: $isoChecksum"
 
-# --- 2) Ensure Packer is installed ---
+# 2) Ensure Packer
 if (-not (Test-Path $packerExe)) {
   Write-Host 'Installing Packer 1.11.2...' -ForegroundColor Cyan
   New-Item -ItemType Directory -Path $packerBin -Force | Out-Null
@@ -54,14 +54,14 @@ if (-not (Test-Path $packerExe)) {
 }
 $env:PATH = "$packerBin;$env:PATH"
 
-# --- 3) Clean old Packer output ---
+# 3) Clean old Packer output
 if (Test-Path $outputDir) {
   Write-Host 'Cleaning previous Packer output...' -ForegroundColor Yellow
   Get-Process vmware-vmx -ErrorAction SilentlyContinue | Stop-Process -Force
   Remove-Item -Path $outputDir -Recurse -Force
 }
 
-# --- 4) Build the golden image ---
+# 4) Build the golden image
 Write-Host 'Running Packer build...' -ForegroundColor Cyan
 Push-Location $packerDir
 & $packerExe build `
@@ -74,9 +74,9 @@ if ($LASTEXITCODE -ne 0) {
   exit 1
 }
 Pop-Location
-Write-Host 'Packer build complete.' -ForegroundColor Green
+Write-Host '✔ Packer build complete.' -ForegroundColor Green
 
-# --- 5) Register the template VM ---
+# 5) Register the template VM
 if (Test-Path $templateVmx) {
   Write-Host 'Registering template VM...' -ForegroundColor Cyan
   $vmrun = (Get-Command vmrun -ErrorAction SilentlyContinue).Path
@@ -84,16 +84,16 @@ if (Test-Path $templateVmx) {
     $vmrun = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
   }
   & $vmrun -T ws register $templateVmx | Out-Null
-  Write-Host 'Template VM registered (if supported).' -ForegroundColor Green
+  Write-Host '✔ Template registered (if supported).' -ForegroundColor Green
 }
 
-# --- 6) Start VMREST daemon ---
+# 6) Start VMREST daemon
 Write-Host 'Starting VMREST daemon...' -ForegroundColor Cyan
 & (Join-Path $scriptRoot 'StartVMRestDaemon.ps1')
 
-# --- 7) Wait for VMREST API ---
+# 7) Wait for VMREST API
 $pair      = "$vmrestUser`:$vmrestPass"
-$authValue = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair)]
+$authValue = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
 $headers   = @{ Authorization = "Basic $authValue" }
 
 Write-Host 'Waiting for VMREST API...' -NoNewline
@@ -112,7 +112,7 @@ if ($LASTEXITCODE -ne 0) {
   exit 1
 }
 
-# --- 8) List VMREST inventory & pick template ---
+# 8) List VMREST inventory & pick template
 Write-Host "`nVMREST inventory:" -ForegroundColor Cyan
 $vms = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $headers -UseBasicParsing
 for ($idx = 0; $idx -lt $vms.Count; $idx++) {
@@ -126,7 +126,7 @@ if (-not $template) {
 }
 Write-Host "`nSelected template ID: $($template.id)" -ForegroundColor Green
 
-# --- 9) Write terraform.tfvars ---
+# 9) Write terraform.tfvars
 Write-Host 'Writing terraform.tfvars...' -ForegroundColor Cyan
 $pathEsc = $VmOutputPath -replace '\\','\\\\'
 @"
@@ -139,15 +139,15 @@ vm_memory       = 2048
 vm_path         = "$pathEsc"
 "@ | Set-Content -Path $tfvarsFile -Encoding ASCII
 
-# --- 10) Terraform init & apply ---
+# 10) Terraform init & apply
 Write-Host 'Running Terraform init & apply...' -ForegroundColor Cyan
 Push-Location $scriptRoot
 terraform init -upgrade
 terraform apply -auto-approve -parallelism=1
 Pop-Location
-Write-Host 'Terraform apply complete.' -ForegroundColor Green
+Write-Host '✔ Terraform apply complete.' -ForegroundColor Green
 
-# --- 11) (Optional) Power on demo VMs ---
+# 11) (Optional) Power on demo VMs
 Write-Host 'Powering on demo VMs...' -ForegroundColor Cyan
 $vmrun = (Get-Command vmrun -ErrorAction SilentlyContinue).Path
 if (-not $vmrun) {
