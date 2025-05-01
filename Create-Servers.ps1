@@ -64,7 +64,7 @@ if (Test-Path $outputDir) {
     Remove-Item -Recurse -Force $outputDir
 }
 
-# 5) Run Packer build (inside packer-Win2022 folder)
+# 5) Run Packer build (inside packer-Win2022)
 Write-Host '==> Building Win2022 GUI image with Packer…' -ForegroundColor Cyan
 Push-Location $packerDir
 & $packerExe build `
@@ -77,9 +77,9 @@ if ($LASTEXITCODE -ne 0) {
 Pop-Location
 Write-Host '✅ Packer build complete.' -ForegroundColor Green
 
-# 6) Start VMREST daemon
+# 6) Start VMREST daemon (fixed to match your file name)
 Write-Host '==> Starting VMREST daemon…' -ForegroundColor Cyan
-& (Join-Path $scriptRoot 'Start-VMRestDaemon.ps1')
+& (Join-Path $scriptRoot 'StartVMRestDaemon.ps1')
 
 # 7) Health-check VMREST API
 $securePass = ConvertTo-SecureString $vmrestCredPass -AsPlainText -Force
@@ -93,8 +93,7 @@ for ($i = 1; $i -le 10; $i++) {
           -UseBasicParsing -ErrorAction Stop | Out-Null
         Write-Host ' OK' -ForegroundColor Green
         break
-    }
-    catch {
+    } catch {
         Write-Host -NoNewline '.'; Start-Sleep -Seconds 3
     }
 }
