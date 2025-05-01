@@ -17,6 +17,7 @@
           </InstallTo>
         </OSImage>
       </ImageInstall>
+
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
@@ -39,6 +40,7 @@
           </ModifyPartitions>
         </Disk>
       </DiskConfiguration>
+
       <UserData>
         <AcceptEula>true</AcceptEula>
         <FullName>Administrator</FullName>
