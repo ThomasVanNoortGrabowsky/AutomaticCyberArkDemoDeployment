@@ -1,7 +1,7 @@
 <#
   Create-Servers.ps1
   --------------------------------------
-  1) Builds a Win2022 GUI VM with Packer (using win2022-gui.json).
+  1) Builds a GUI Win2022 VM with Packer (using win2022-gui.json).
   2) Starts and health-checks the VMware REST API.
   3) Runs Terraform to deploy Vault, PVWA, PSM, CPM.
 #>
@@ -64,17 +64,17 @@ if (Test-Path $outputDir) {
     Remove-Item -Recurse -Force $outputDir
 }
 
-# 5) Run Packer build
+# 5) Run Packer build (inside packer-Win2022 folder)
 Write-Host '==> Building Win2022 GUI image with Packer…' -ForegroundColor Cyan
+Push-Location $packerDir
 & $packerExe build `
     -var "iso_url=$isoUrl" `
     -var "iso_checksum=$isoChecksum" `
-    $packerTpl
-
+    "win2022-gui.json"
 if ($LASTEXITCODE -ne 0) {
-    Write-Error '❌ Packer build failed.'
-    exit 1
+    Write-Error '❌ Packer build failed.'; Pop-Location; exit 1
 }
+Pop-Location
 Write-Host '✅ Packer build complete.' -ForegroundColor Green
 
 # 6) Start VMREST daemon
@@ -99,8 +99,7 @@ for ($i = 1; $i -le 10; $i++) {
     }
 }
 if ($LASTEXITCODE -ne 0) {
-    Write-Error '❌ VMREST API did not respond.'
-    exit 1
+    Write-Error '❌ VMREST API did not respond.'; exit 1
 }
 
 # 8) Write terraform.tfvars
