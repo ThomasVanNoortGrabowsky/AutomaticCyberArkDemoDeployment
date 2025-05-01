@@ -30,8 +30,7 @@ $vmrestCredPass = 'Cyberark1'
 
 # 1) Validate ISO
 if (-not (Test-Path $IsoPath)) {
-    Write-Error "ISO not found at: $IsoPath"
-    exit 1
+    Write-Error "ISO not found at: $IsoPath"; exit 1
 }
 $isoUrl      = "file:///$($IsoPath.Replace('\','/'))"
 $isoHash     = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
@@ -40,8 +39,7 @@ Write-Host "ISO validated. Checksum: $isoChecksum"
 
 # 2) Validate Packer template
 if (-not (Test-Path $packerTpl)) {
-    Write-Error "Cannot find Packer template at: $packerTpl"
-    exit 1
+    Write-Error "Cannot find Packer template at: $packerTpl"; exit 1
 }
 
 # 3) Install Packer v1.11.2 if needed
@@ -77,7 +75,7 @@ if ($LASTEXITCODE -ne 0) {
 Pop-Location
 Write-Host '✅ Packer build complete.' -ForegroundColor Green
 
-# 6) Start VMREST daemon (fixed to match your file name)
+# 6) Start VMREST daemon
 Write-Host '==> Starting VMREST daemon…' -ForegroundColor Cyan
 & (Join-Path $scriptRoot 'StartVMRestDaemon.ps1')
 
@@ -101,16 +99,16 @@ if ($LASTEXITCODE -ne 0) {
     Write-Error '❌ VMREST API did not respond.'; exit 1
 }
 
-# 8) Write terraform.tfvars
+# 8) Write terraform.tfvars with literal values
 Write-Host '==> Writing terraform.tfvars…' -ForegroundColor Cyan
 $escapedVmPath = $VmOutputPath -replace '\\','\\\\'
 @"
 vmrest_user     = "$vmrestCredUser"
 vmrest_password = "$vmrestCredPass"
-vault_image_id  = "{{user `vm_name`}}"
-app_image_id    = "{{user `vm_name`}}"
-vm_processors   = {{user `numvcpus`}}
-vm_memory       = {{user `memsize`}}
+vault_image_id  = "Win2022_GUI"
+app_image_id    = "Win2022_GUI"
+vm_processors   = 2
+vm_memory       = 2048
 vm_path         = "$escapedVmPath"
 "@ | Set-Content $tfvarsFile -Encoding ASCII
 
