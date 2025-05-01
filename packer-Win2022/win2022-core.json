@@ -6,7 +6,7 @@
         "iso_url": "https://software-download.microsoft.com/download/sg/20348.169.210806-2348.fe_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso",
         "memsize": "2048",
         "numvcpus": "2",
-        "vm_name": "Win2022_20324-Core",
+        "vm_name": "Win2022_20324",
         "winrm_password" : "packer",
         "winrm_username" : "Administrator",
         "virtio_iso_path" : "virtio-win-0.1.229.iso"
@@ -28,7 +28,7 @@
             "winrm_use_ssl": true,
             "winrm_insecure": true,
             "winrm_timeout": "4h",
-            "floppy_files": ["scripts/bios/core/autounattend.xml"],
+            "floppy_files": ["scripts/bios/gui/autounattend.xml"],
             "shutdown_command": "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\"",
             "shutdown_timeout": "30m",
             "skip_compaction": false,
@@ -55,12 +55,12 @@
             "winrm_use_ssl": true,
             "winrm_insecure": true,
             "winrm_timeout": "4h",
-            "floppy_files": ["scripts/bios/core/autounattend.xml"],
+            "floppy_files": ["scripts/bios/gui/autounattend.xml"],
             "shutdown_command": "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\"",
             "shutdown_timeout": "30m",
             "vboxmanage": [
-              ["modifyvm", "{{.Name}}", "--memory", "{{user `memsize`}}"],
-              ["modifyvm", "{{.Name}}", "--cpus", "{{user `numvcpus`}}"]
+                ["modifyvm", "{{.Name}}", "--memory", "{{user `memsize`}}"],
+                ["modifyvm", "{{.Name}}", "--cpus", "{{user `numvcpus`}}"]
             ]
         },
         {
@@ -85,7 +85,7 @@
             "winrm_insecure": true,
             "winrm_timeout": "4h",
             "qemuargs": [ [ "-cdrom", "{{user `virtio_iso_path`}}" ] ],
-            "floppy_files": ["scripts/bios/core/autounattend.xml"],
+            "floppy_files": ["scripts/bios/gui/autounattend.xml"],
             "shutdown_command": "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\"",
             "shutdown_timeout": "30m"
         }
