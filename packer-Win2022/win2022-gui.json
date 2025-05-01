@@ -30,6 +30,7 @@
     },
     {
       "type":             "vmware-vmx",
+      "communicator":     "none",
       "source_path":      "output-base/{{user `vm_name`}}.vmx",
       "linked":           true,
       "vm_name":          "{{user `vm_name`}}-linked",
