@@ -1,21 +1,32 @@
 <#
 .SYNOPSIS
-  Full pipeline: Packer (base + linked) → VMREST → Terraform → optional VM launch
+  Build a golden Win2022 GUI VM, make a fast linked clone, register it, and drive Terraform end-to-end.
+
+.DESCRIPTION
+  1) Builds the base VM (vmware-iso) via Packer using win2022-gui.json.
+  2) Builds a linked clone (vmware-vmx) via the same template.
+  3) Registers the linked clone with VMware Workstation.
+  4) Starts & polls the VMREST API.
+  5) Discovers the template’s VM ID.
+  6) Writes terraform.tfvars.
+  7) Runs Terraform apply.
+  8) (Optional) Powers on the four demo VMs.
 #>
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)][string]$IsoPath,
-    [Parameter(Mandatory=$true)][string]$VmOutputPath
+  [Parameter(Mandatory=$true)][string]$IsoPath,
+  [Parameter(Mandatory=$true)][string]$VmOutputPath
 )
 
 $ErrorActionPreference = 'Stop'
 
-# Paths & creds
+# paths & creds
 $scriptRoot   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $packerBin    = Join-Path $scriptRoot 'packer-bin'
 $packerExe    = Join-Path $packerBin   'packer.exe'
 $packerDir    = Join-Path $scriptRoot 'packer-Win2022'
+$outputBase   = Join-Path $packerDir   'output-base'
 $outputLinked = Join-Path $packerDir   'output-linked'
 $templateVmx  = Join-Path $outputLinked 'Win2022_GUI-linked.vmx'
 $tfvarsFile   = Join-Path $scriptRoot 'terraform.tfvars'
@@ -28,68 +39,96 @@ if (-not (Test-Path $IsoPath)) {
   Write-Error "ISO not found at '$IsoPath'"; exit 1
 }
 $isoUrl      = "file:///$($IsoPath -replace '\\','/')"
-$isoChecksum = 'sha256:' + (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
+$isoChecksum = 'sha256:' + (Get-FileHash $IsoPath -Algorithm SHA256).Hash
+Write-Host "✔ ISO checksum: $isoChecksum" -ForegroundColor Green
 
-# 2) Install Packer if needed
+# 2) Install Packer if missing
 if (-not (Test-Path $packerExe)) {
-  Write-Host 'Installing Packer 1.11.2...' -ForegroundColor Cyan
+  Write-Host 'Installing Packer v1.11.2...' -ForegroundColor Cyan
   New-Item -ItemType Directory -Path $packerBin -Force | Out-Null
   $zip = Join-Path $packerBin 'packer.zip'
-  Invoke-WebRequest -Uri 'https://releases.hashicorp.com/packer/1.11.2/packer_1.11.2_windows_amd64.zip' -OutFile $zip
+  Invoke-WebRequest `
+    -Uri 'https://releases.hashicorp.com/packer/1.11.2/packer_1.11.2_windows_amd64.zip' `
+    -OutFile $zip
   Expand-Archive -Path $zip -DestinationPath $packerBin -Force
   Remove-Item $zip -Force
 }
-# Prepend packer to PATH
-$orig = [Environment]::GetEnvironmentVariable('PATH','Process')
-[Environment]::SetEnvironmentVariable('PATH', "$packerBin;$orig",'Process')
+# prepend to PATH
+$oldPath = [Environment]::GetEnvironmentVariable('PATH','Process')
+[Environment]::SetEnvironmentVariable('PATH', "$packerBin;$oldPath",'Process')
 
-# 3) Clean old linked output
-if (Test-Path $outputLinked) {
-  Remove-Item -Path $outputLinked -Recurse -Force
-}
+# 3) Clean any prior output
+if (Test-Path $outputBase)   { Remove-Item $outputBase   -Recurse -Force }
+if (Test-Path $outputLinked) { Remove-Item $outputLinked -Recurse -Force }
 
-# 4) Packer build (base + linked)
+# 4a) Build the base VM
+Write-Host '➜ Packer: building base VM...' -ForegroundColor Cyan
 Push-Location $packerDir
 & $packerExe build `
+    -only=vmware-iso `
     -var "iso_url=$isoUrl" `
     -var "iso_checksum=$isoChecksum" `
     'win2022-gui.json'
 if ($LASTEXITCODE -ne 0) {
-  Write-Error 'Packer build failed.'; Pop-Location; exit 1
+  Write-Error '✖ Base build failed.'; Pop-Location; exit 1
+}
+
+# 4b) Build the linked clone
+Write-Host '➜ Packer: building linked clone...' -ForegroundColor Cyan
+& $packerExe build -only=vmware-vmx 'win2022-gui.json'
+if ($LASTEXITCODE -ne 0) {
+  Write-Error '✖ Linked clone build failed.'; Pop-Location; exit 1
 }
 Pop-Location
+Write-Host '✔ Packer base + linked completed.' -ForegroundColor Green
 
-# 5) Register linked VM
+# 5) Register the linked VM in Workstation
 if (Test-Path $templateVmx) {
+  Write-Host '➜ Registering linked VM...' -ForegroundColor Cyan
   $vmrun = (Get-Command vmrun -ErrorAction SilentlyContinue).Path
-  if (-not $vmrun) {
-    $vmrun = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
-  }
+  if (-not $vmrun) { $vmrun = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe' }
   & $vmrun -T ws register $templateVmx | Out-Null
+  Write-Host '✔ Template registered.' -ForegroundColor Green
 }
 
-# 6) Start VMREST
+# 6) Start VMREST daemon
+Write-Host '➜ Starting VMREST...' -ForegroundColor Cyan
 & (Join-Path $scriptRoot 'StartVMRestDaemon.ps1')
 
-# 7) Wait for VMREST
+# 7) Wait for VMREST API
 $pair    = "$vmrestUser`:$vmrestPass"
 $auth    = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
 $headers = @{ Authorization = "Basic $auth" }
+Write-Host '➜ Waiting for VMREST API...' -NoNewline
 for ($i=1; $i -le 10; $i++) {
   try {
-    Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $headers -UseBasicParsing | Out-Null
+    Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' `
+                      -Headers $headers -UseBasicParsing | Out-Null
+    Write-Host ' OK' -ForegroundColor Green
     break
   } catch {
-    Start-Sleep 3
+    Write-Host '.' -NoNewline; Start-Sleep 3
   }
 }
 
-# 8) Select template VM
-$vms      = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $headers
-$template = $vms | Where-Object { $_.displayName -match 'Win2022' } | Select-Object -First 1
-if (-not $template) { $template = $vms[0] }
+# 8) Pick the Win2022 template VM
+Write-Host "`nVMREST inventory:" -ForegroundColor Cyan
+$vms = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' `
+                        -Headers $headers -UseBasicParsing
+for ($j=0; $j -lt $vms.Count; $j++) {
+  $nm = $vms[$j].displayName
+  if (-not $nm) { $nm = '(blank)' }
+  Write-Host (" [{0}] {1,-20} : {2}" -f $j, $nm, $vms[$j].id)
+}
+$template = $vms | Where-Object { $_.displayName -match 'Win2022' } `
+                   | Select-Object -First 1
+if (-not $template) {
+  Write-Warning 'No "Win2022" match; using first entry.'; $template = $vms[0]
+}
+Write-Host "✔ Selected template ID: $($template.id)" -ForegroundColor Green
 
 # 9) Write terraform.tfvars
+Write-Host '➜ Writing terraform.tfvars...' -ForegroundColor Cyan
 $vmPathEsc = $VmOutputPath -replace '\\','\\\\'
 @"
 vmrest_user     = "$vmrestUser"
@@ -99,19 +138,20 @@ app_image_id    = "$($template.id)"
 vm_processors   = 2
 vm_memory       = 2048
 vm_path         = "$vmPathEsc"
-"@ | Set-Content $tfvarsFile -Encoding ASCII
+"@ | Set-Content -Path $tfvarsFile -Encoding ASCII
 
-# 10) Terraform
+# 10) Terraform init & apply
+Write-Host '➜ Running Terraform init & apply...' -ForegroundColor Cyan
 Push-Location $scriptRoot
 terraform init -upgrade
 terraform apply -auto-approve -parallelism=1
 Pop-Location
+Write-Host '✔ Terraform apply complete.' -ForegroundColor Green
 
-# 11) Power on VMs (optional)
+# 11) Optional: Power on demo VMs
+Write-Host '➜ Powering on demo VMs...' -ForegroundColor Cyan
 $vmrun = (Get-Command vmrun -ErrorAction SilentlyContinue).Path
-if (-not $vmrun) {
-  $vmrun = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
-}
+if (-not $vmrun) { $vmrun = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe' }
 foreach ($name in 'Vault-VM','PVWA-VM','PSM-VM','CPM-VM') {
   $vmx = Join-Path $VmOutputPath "$name\$name.vmx"
   if (Test-Path $vmx) {
@@ -119,4 +159,4 @@ foreach ($name in 'Vault-VM','PVWA-VM','PSM-VM','CPM-VM') {
   }
 }
 
-Write-Host "All done!"
+Write-Host "`nAll done!" -ForegroundColor Green
