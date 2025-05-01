@@ -29,7 +29,7 @@ $tfvarsFile   = Join-Path $scriptRoot 'terraform.tfvars'
 
 # Credentials for VMREST
 $vmrestUser = 'vmrest'
-$vmrestPass = 'Cyberark1'
+$vmrestPass = 'Cyberark1!'   # <-- updated password
 
 # 1) Validate ISO
 if (-not (Test-Path $IsoPath)) {
@@ -86,10 +86,10 @@ Write-Host '==> Starting VMREST daemon…' -ForegroundColor Cyan
 & (Join-Path $scriptRoot 'StartVMRestDaemon.ps1')
 
 # 7) Wait for VMREST API (using HTTP Basic)
-$authPair = "$vmrestUser`:$vmrestPass"
+$authPair  = "$vmrestUser`:$vmrestPass"
 $authBytes = [Text.Encoding]::ASCII.GetBytes($authPair)
 $authValue = [Convert]::ToBase64String($authBytes)
-$headers = @{ Authorization = "Basic $authValue" }
+$headers   = @{ Authorization = "Basic $authValue" }
 
 Write-Host '==> Waiting for VMREST API…' -NoNewline
 for ($i = 0; $i -lt 10; $i++) {
@@ -107,8 +107,8 @@ if ($LASTEXITCODE -ne 0) {
 
 # 8) Discover the template VM’s GUID
 Write-Host '==> Querying VMREST for template ID…' -ForegroundColor Cyan
-$vms = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $headers -UseBasicParsing
-$template = $vms | Where-Object { $_.displayName -eq 'Win2022_GUI' }
+$vms       = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $headers -UseBasicParsing
+$template  = $vms | Where-Object { $_.displayName -eq 'Win2022_GUI' }
 if (-not $template) {
   Write-Error 'Template VM not found in VMREST'; exit 1
 }
@@ -135,19 +135,3 @@ terraform init -upgrade
 terraform apply -auto-approve -parallelism=1
 Pop-Location
 Write-Host '✅ Terraform apply complete.' -ForegroundColor Green
-
-# 11) (Optional) Launch your VMs in GUI
-Write-Host '==> Launching demo VMs in VMware Workstation…' -ForegroundColor Cyan
-$vmNames = 'Vault-VM','PVWA-VM','PSM-VM','CPM-VM'
-foreach ($name in $vmNames) {
-  $vmx = Join-Path $VmOutputPath "$name\$name.vmx"
-  if (Test-Path $vmx) {
-    Write-Host "  ↪ Starting $name" -NoNewline
-    & $vmrun -T ws start $vmx
-    Write-Host ' OK' -ForegroundColor Green
-  } else {
-    Write-Warning "Missing VMX: $vmx"
-  }
-}
-
-Write-Host "`n🎉 All done!" -ForegroundColor Green
