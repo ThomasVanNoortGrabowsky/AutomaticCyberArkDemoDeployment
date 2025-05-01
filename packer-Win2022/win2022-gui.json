@@ -47,7 +47,7 @@
       "type":             "powershell",
       "pause_before":     "1m",
       "scripts":          ["scripts/cleanup.ps1"],
-      "valid_exit_codes": [0, 1, 3010]
+      "valid_exit_codes": [0, 1, 3010, 123]
     }
   ]
 }
