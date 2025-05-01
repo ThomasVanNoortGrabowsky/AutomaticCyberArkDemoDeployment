@@ -10,33 +10,31 @@
     "winrm_username":  "Administrator",
     "winrm_password":  "packer"
   },
-  "builders": [
-    {
-      "type":           "vmware-iso",
-      "guest_os_type":  "windows2019srv-64",
-      "vm_name":        "{{user `vm_name`}}",
-      "boot_wait":      "{{user `boot_wait`}}",
-      "disk_size":      "{{user `disk_size`}}",
-      "headless":       false,
-      "iso_checksum":   "{{user `iso_checksum`}}",
-      "iso_url":        "{{user `iso_url`}}",
-      "communicator":   "winrm",
-      "winrm_username": "{{user `winrm_username`}}",
-      "winrm_password": "{{user `winrm_password`}}",
-      "winrm_use_ssl":  true,
-      "winrm_insecure": true,
-      "winrm_timeout":  "4h",
-      "floppy_files":   ["scripts/bios/gui/autounattend.xml"],
-      "shutdown_command": "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\"",
-      "shutdown_timeout": "30m",
-      "vmx_data": {
-        "memsize":           "{{user `memsize`}}",
-        "numvcpus":          "{{user `numvcpus`}}",
-        "virtualHW.version": "14",
-        "scsi0.virtualDev":  "lsisas1068"
-      }
+  "builders": [{
+    "type":           "vmware-iso",
+    "guest_os_type":  "windows2019srv-64",
+    "vm_name":        "{{user `vm_name`}}",
+    "boot_wait":      "{{user `boot_wait`}}",
+    "disk_size":      "{{user `disk_size`}}",
+    "iso_url":        "{{user `iso_url`}}",
+    "iso_checksum":   "{{user `iso_checksum`}}",
+    "communicator":   "winrm",
+    "winrm_username": "{{user `winrm_username`}}",
+    "winrm_password": "{{user `winrm_password`}}",
+    "winrm_use_ssl":  false,
+    "winrm_insecure": false,
+    "winrm_port":     5985,
+    "winrm_timeout":  "4h",
+    "floppy_files":   ["scripts/bios/gui/autounattend.xml"],
+    "shutdown_command": "shutdown /s /t 5 /f /d p:4:1 /c \"Packer Shutdown\"",
+    "shutdown_timeout": "30m",
+    "vmx_data": {
+      "memsize":           "{{user `memsize`}}",
+      "numvcpus":          "{{user `numvcpus`}}",
+      "virtualHW.version": "14",
+      "scsi0.virtualDev":  "lsisas1068"
     }
-  ],
+  }],
   "provisioners": [
     {
       "type":             "powershell",
