@@ -2,7 +2,7 @@
   Create-Servers.ps1
   --------------------------------------
   End-to-end pipeline:
-    1) Builds a minimal Win2022 GUI “golden” VM with Packer.
+    1) Builds a GUI Win2022 VM with Packer (using win2022-gui.json).
     2) Starts and health-checks the VMware REST API.
     3) Runs Terraform to deploy Vault, PVWA, PSM, CPM.
 #>
@@ -28,7 +28,14 @@ $isoUrl      = "file:///$($IsoPath.Replace('\','/'))"
 $checksum    = (Get-FileHash -Algorithm SHA256 -Path $IsoPath).Hash
 $isoChecksum = "sha256:$checksum"
 
-# 2) Ensure Packer v1.11.2 is installed
+# 2) Locate Packer template
+$packerTemplate = Join-Path $scriptRoot 'packer-Win2022\win2022-gui.json'
+if (-not (Test-Path $packerTemplate)) {
+    Write-Error "Cannot find Packer template at: $packerTemplate"
+    exit 1
+}
+
+# 3) Ensure Packer v1.11.2 is installed
 $packerBin = Join-Path $scriptRoot 'packer-bin'
 $packerExe = Join-Path $packerBin 'packer.exe'
 if (-not (Test-Path $packerExe)) {
@@ -43,38 +50,30 @@ if (-not (Test-Path $packerExe)) {
 }
 $env:PATH = "$packerBin;$env:PATH"
 
-# 3) Clean old Packer output
-$packerDir = Join-Path $scriptRoot 'packer-Win2022'
-$outputDir = Join-Path $packerDir 'output-{{user `vm_name`}}'
+# 4) Clean old Packer output (if any)
+$outputDir = Join-Path (Split-Path $packerTemplate) 'output-vmware-iso'
 if (Test-Path $outputDir) {
     Write-Host '==> Removing existing Packer output…' -ForegroundColor Yellow
     Get-Process -Name vmware-vmx -ErrorAction SilentlyContinue | Stop-Process -Force
     Remove-Item -Recurse -Force $outputDir
 }
 
-# 4) Packer build (minimal GUI)
-Push-Location $packerDir
-Write-Host '==> Building minimal GUI image with Packer…' -ForegroundColor Cyan
+# 5) Run Packer build
+Write-Host '==> Building Win2022 GUI image with Packer…' -ForegroundColor Cyan
 & $packerExe build `
     -var "iso_url=$isoUrl" `
     -var "iso_checksum=$isoChecksum" `
-    -var "vm_name=Win2022-GUI-Minimal" `
-    -var "vm_memory=2048" `
-    -var "vm_cpus=2" `
-    -var "boot_wait=5s" `
-    -var "disk_size=40960" `
-    "win2022-gui-minimal.json"
+    $packerTemplate
 if ($LASTEXITCODE -ne 0) {
     Write-Error '❌ Packer build failed.'; exit 1
 }
-Pop-Location
 Write-Host '✅ Packer build complete.' -ForegroundColor Green
 
-# 5) Start VMREST daemon
+# 6) Start VMREST daemon
 Write-Host '==> Launching VMREST daemon…' -ForegroundColor Cyan
 & (Join-Path $scriptRoot 'Start-VMRestDaemon.ps1')
 
-# 6) Health-check VMREST API
+# 7) Health-check VMREST API
 $cred = New-Object PSCredential('vmrest', (ConvertTo-SecureString 'Cyberark1' -AsPlainText -Force))
 Write-Host '==> Checking VMREST API…' -NoNewline
 for ($i = 1; $i -le 10; $i++) {
@@ -93,22 +92,22 @@ if ($LASTEXITCODE -ne 0) {
     Write-Error '❌ VMREST API did not respond.'; exit 1
 }
 
-# 7) Write terraform.tfvars
+# 8) Write terraform.tfvars
 Write-Host '==> Writing terraform.tfvars…' -ForegroundColor Cyan
 $escapedPath = $VmOutputPath -replace '\\','\\\\'
 @"
 vmrest_user     = "vmrest"
 vmrest_password = "Cyberark1"
-vault_image_id  = "Win2022-GUI-Minimal"
-app_image_id    = "Win2022-GUI-Minimal"
+vault_image_id  = "thomas"
+app_image_id    = "thomas-app"
 vm_processors   = 2
 vm_memory       = 2048
 vm_path         = "$escapedPath"
 "@ | Set-Content (Join-Path $scriptRoot 'terraform.tfvars') -Encoding ASCII
 
-# 8) Terraform init & apply (serial)
-Push-Location $scriptRoot
+# 9) Terraform init & apply (serial)
 Write-Host '==> Initializing Terraform…' -ForegroundColor Cyan
+Push-Location $scriptRoot
 terraform init -upgrade
 Write-Host '==> Applying Terraform…' -ForegroundColor Cyan
 terraform apply -auto-approve -parallelism=1
