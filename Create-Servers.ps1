@@ -117,11 +117,10 @@ try { Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $hdrs | Ou
 #---- 9) Retrieve template GUID ----#
 Write-Host 'Retrieving template GUID...' -ForegroundColor Cyan
 $vms = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $hdrs
-$template = $vms | Where-Object { $_.displayName -match 'Win2022' } | Select-Object -First 1
-if (-not $template) { Write-Error 'Template matching "Win2022" not found.'; exit 1 }
+# Select first VMREST entry regardless of name
+$template = $vms | Select-Object -First 1
 $templateId = $template.id
 Write-Host "Template GUID: $templateId" -ForegroundColor Green
-
 #---- 10) Write terraform.tfvars ----#
 Write-Host 'Writing terraform.tfvars...' -ForegroundColor Cyan
 @"
