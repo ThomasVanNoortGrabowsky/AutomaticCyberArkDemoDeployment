@@ -4,9 +4,9 @@
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xmlns:cpi="urn:schemas-microsoft-com:cpi">
 
-  <!-- 1) windowsPE pass: skip language/time/keyboard -->
+  <!-- 1) windowsPE: skip language/time/keyboard and pick edition by index -->
   <settings pass="windowsPE">
-    <!-- Set all locale/language settings so Setup never prompts -->
+    <!-- a) Skip language/time/keyboard -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -22,7 +22,7 @@
       <UserLocale>en-US</UserLocale>
     </component>
 
-    <!-- Apply and partition the WIM image -->
+    <!-- b) Apply & partition image, selecting INDEX 4 (Desktop Experience) -->
     <component name="Microsoft-Windows-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -32,8 +32,8 @@
         <OSImage>
           <InstallFrom>
             <MetaData wcm:action="add" wcm:keyValue="1">
-              <Key>/IMAGE/NAME</Key>
-              <Value>Windows Server 2022 Datacenter (Desktop Experience)</Value>
+              <Key>/IMAGE/INDEX</Key>
+              <Value>4</Value>
             </MetaData>
           </InstallFrom>
           <InstallTo>
@@ -42,6 +42,7 @@
           </InstallTo>
         </OSImage>
       </ImageInstall>
+
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
@@ -64,6 +65,7 @@
           </ModifyPartitions>
         </Disk>
       </DiskConfiguration>
+
       <UserData>
         <AcceptEula>true</AcceptEula>
         <FullName>Administrator</FullName>
@@ -73,7 +75,7 @@
     </component>
   </settings>
 
-  <!-- 2) specialize pass: set hostname -->
+  <!-- 2) specialize: set hostname -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
@@ -84,7 +86,7 @@
     </component>
   </settings>
 
-  <!-- 3) oobeSystem pass: auto-logon, WinRM setup -->
+  <!-- 3) oobeSystem: auto-logon & WinRM -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
@@ -111,19 +113,22 @@
           <Order>1</Order>
           <CommandLine>
             powershell -ExecutionPolicy Unrestricted -Command "Enable-PSRemoting -Force;
-               New-NetFirewallRule -Name 'WinRM-HTTPS-In-TCP'
-                                   -DisplayName 'WinRM HTTPS'
-                                   -Direction Inbound
-                                   -Action Allow
-                                   -Protocol TCP
-                                   -LocalPort 5986"
+              New-NetFirewallRule -Name 'WinRM-HTTPS-In-TCP'
+                                  -DisplayName 'WinRM HTTPS'
+                                  -Direction Inbound
+                                  -Action Allow
+                                  -Protocol TCP
+                                  -LocalPort 5986"
           </CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
     </component>
   </settings>
 
-  <!-- 4) offlineImage: apply correct WIM index -->
+  <!-- 4) offlineImage: just for reference, not needed when using INDEX -->
+  <!--
   <cpi:offlineImage
-    cpi:source="wim:c:/sources/install.wim#Windows Server 2022 Datacenter (Desktop Experience)" />
+    cpi:source="wim:c:/sources/install.wim#Windows Server 2022 Datacenter Evaluation (Desktop Experience)" />
+  -->
+
 </unattend>
