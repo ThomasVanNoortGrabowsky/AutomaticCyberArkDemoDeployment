@@ -1,12 +1,10 @@
+<!-- scripts/bios/gui/autounattend.xml -->
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend"
           xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-          xmlns:cpi="urn:schemas-microsoft-com:cpi">
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
-  <!-- 1) windowsPE: skip language/time/keyboard and pick edition by index -->
   <settings pass="windowsPE">
-    <!-- a) Skip language/time/keyboard -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -21,8 +19,6 @@
       <UILanguageFallback>en-US</UILanguageFallback>
       <UserLocale>en-US</UserLocale>
     </component>
-
-    <!-- b) Apply & partition image, selecting INDEX 4 (Desktop Experience) -->
     <component name="Microsoft-Windows-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -42,7 +38,6 @@
           </InstallTo>
         </OSImage>
       </ImageInstall>
-
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
@@ -65,7 +60,6 @@
           </ModifyPartitions>
         </Disk>
       </DiskConfiguration>
-
       <UserData>
         <AcceptEula>true</AcceptEula>
         <FullName>Administrator</FullName>
@@ -75,7 +69,6 @@
     </component>
   </settings>
 
-  <!-- 2) specialize: set hostname -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
@@ -86,7 +79,6 @@
     </component>
   </settings>
 
-  <!-- 3) oobeSystem: auto-logon & WinRM -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
@@ -94,12 +86,12 @@
                language="neutral"
                versionScope="nonSxS">
       <AutoLogon>
+        <Username>Administrator</Username>
         <Password>
           <Value>packer</Value>
           <PlainText>true</PlainText>
         </Password>
         <Enabled>true</Enabled>
-        <Username>Administrator</Username>
         <LogonCount>1</LogonCount>
       </AutoLogon>
       <UserAccounts>
@@ -111,24 +103,22 @@
       <FirstLogonCommands>
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <CommandLine>
-            powershell -ExecutionPolicy Unrestricted -Command "Enable-PSRemoting -Force;
-              New-NetFirewallRule -Name 'WinRM-HTTPS-In-TCP'
-                                  -DisplayName 'WinRM HTTPS'
-                                  -Direction Inbound
-                                  -Action Allow
-                                  -Protocol TCP
-                                  -LocalPort 5986"
-          </CommandLine>
+          <CommandLine>powershell -Command "if(Test-Path D:\amd64){D:\amd64\* /quiet /norestart} elseif(Test-Path E:\amd64){E:\amd64\* /quiet /norestart}"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <CommandLine>powershell -Command "New-SelfSignedCertificate -CertStoreLocation Cert:\LocalMachine\My -DnsName WinRMHost"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <CommandLine>powershell -Command "Enable-PSRemoting -Force; $t=(Get-ChildItem Cert:\LocalMachine\My | Where{$_.Subject -like '*WinRMHost*'}).Thumbprint; New-Item -Path WSMan:\Localhost\Listener -Transport HTTPS -Address * -CertificateThumbPrint $t -Force"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <CommandLine>powershell -Command "New-NetFirewallRule -Name WinRM_HTTPS -DisplayName 'WinRM HTTPS' -Protocol TCP -LocalPort 5986 -Action Allow"</CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
     </component>
   </settings>
-
-  <!-- 4) offlineImage: just for reference, not needed when using INDEX -->
-  <!--
-  <cpi:offlineImage
-    cpi:source="wim:c:/sources/install.wim#Windows Server 2022 Datacenter Evaluation (Desktop Experience)" />
-  -->
 
 </unattend>
