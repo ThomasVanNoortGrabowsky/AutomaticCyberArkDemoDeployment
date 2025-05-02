@@ -38,20 +38,20 @@ if (-not (Test-Path $IsoPath)) {
 }
 $isoUrl      = "file:///$($IsoPath -replace '\\','/')"
 $isoChecksum = 'sha256:' + (Get-FileHash -Path $IsoPath -Algorithm SHA256).Hash
-Write-Host "✔ ISO validated. Checksum: $isoChecksum" -ForegroundColor Green
+Write-Host '✔ ISO validated. Checksum:' $isoChecksum -ForegroundColor Green
 
 #---- 2) Install Packer if missing ----#
 if (-not (Test-Path $packerExe)) {
     Write-Host 'Installing Packer v1.11.2...' -ForegroundColor Cyan
     $packerBin = Split-Path $packerExe
-    New-Item -Path $packerBin -ItemType Directory -Force | Out-Null
+    New-Item -ItemType Directory -Path $packerBin -Force | Out-Null
     $zip = Join-Path $packerBin 'packer.zip'
     Invoke-WebRequest -Uri 'https://releases.hashicorp.com/packer/1.11.2/packer_1.11.2_windows_amd64.zip' -OutFile $zip
     Expand-Archive -Path $zip -DestinationPath $packerBin -Force
-    Remove-Item $zip -Force
+    Remove-Item -Path $zip -Force
 }
 # Update PATH for Packer
-$env:PATH = "$env:PATH;$(Split-Path $packerExe)"
+$env:PATH = $env:PATH + ';' + (Split-Path $packerExe)
 
 #---- 3) Ensure VMware plugin ----#
 Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
@@ -80,9 +80,7 @@ Write-Host '✔ Packer build complete.' -ForegroundColor Green
 if (Test-Path $templateVmx) {
     Write-Host 'Registering template with VMREST...' -ForegroundColor Cyan
     $vmrun = (Get-Command vmrun -ErrorAction SilentlyContinue).Path
-    if (-not $vmrun) {
-        $vmrun = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
-    }
+    if (-not $vmrun) { $vmrun = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe' }
     & $vmrun -T ws register $templateVmx 2>$null
     Write-Host '✔ Template VM registered.' -ForegroundColor Green
 }
@@ -98,7 +96,7 @@ $hdrs = @{ Authorization = "Basic $auth" }
 Write-Host 'Waiting for VMREST API...' -NoNewline
 for ($i = 1; $i -le 10; $i++) {
     try {
-        Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $hdrs | Out-Null
+        Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $hdrs -UseBasicParsing | Out-Null
         Write-Host ' OK' -ForegroundColor Green
         break
     } catch {
@@ -107,7 +105,7 @@ for ($i = 1; $i -le 10; $i++) {
     }
 }
 try {
-    Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $hdrs | Out-Null
+    Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $hdrs -UseBasicParsing | Out-Null
 } catch {
     Write-Error '❌ VMREST API did not respond.'
     exit 1
@@ -115,7 +113,7 @@ try {
 
 #---- 9) Discover the template VM’s GUID ----#
 Write-Host 'Querying VMREST for template ID...' -ForegroundColor Cyan
-$vms = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $hdrs
+$vms = Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $hdrs -UseBasicParsing
 foreach ($vm in $vms) {
     Write-Host " - $($vm.displayName) (id: $($vm.id))"
 }
@@ -129,12 +127,13 @@ Write-Host "✔ Selected template: $($template.displayName) (GUID: $templateId)"
 
 #---- 10) Write terraform.tfvars ----#
 Write-Host 'Writing terraform.tfvars...' -ForegroundColor Cyan
-@"
-vmrest_user     = "$vmrestUser"
-vmrest_password = "$vmrestPass"
-template_id     = "$templateId"
-vm_path         = "$VmOutputPath"
-"@ | Set-Content -Path $tfvarsFile -Encoding ASCII
+$tfvarsContent = @"
+vmrest_user     = "`"$vmrestUser`"
+vmrest_password = "`"$vmrestPass`"
+template_id     = "`"$templateId`"
+vm_path         = "`"$VmOutputPath`"
+"@
+$tfvarsContent | Set-Content -Path $tfvarsFile -Encoding ASCII
 
 #---- 11) Terraform init & apply ----#
 Write-Host 'Running Terraform init & apply...' -ForegroundColor Cyan
@@ -147,10 +146,8 @@ Write-Host '✔ Terraform apply complete.' -ForegroundColor Green
 #---- 12) Launch the demo VMs in GUI ----#
 Write-Host 'Launching demo VMs in VMware Workstation...' -ForegroundColor Cyan
 $vmNames = 'Vault-VM','PVWA-VM','PSM-VM','CPM-VM'
-$vmrun   = (Get-Command vmrun -ErrorAction SilentlyContinue).Path
-if (-not $vmrun) {
-    $vmrun = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
-}
+$vmrun = (Get-Command vmrun -ErrorAction SilentlyContinue).Path
+if (-not $vmrun) { $vmrun = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe' }
 foreach ($name in $vmNames) {
     $vmx = Join-Path $VmOutputPath "$name\$name.vmx"
     if (Test-Path $vmx) {
