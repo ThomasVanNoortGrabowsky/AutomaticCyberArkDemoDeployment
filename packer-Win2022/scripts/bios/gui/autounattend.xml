@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<unattend xmlns="urn:schemas-microsoft-com:unattend">
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xmlns:cpi="urn:schemas-microsoft-com:cpi">
+
+  <!-- 1) Windows PE: set up disk, apply WIM, accept EULA -->
   <settings pass="windowsPE">
     <component name="Microsoft-Windows-Setup" processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
@@ -17,7 +22,6 @@
           </InstallTo>
         </OSImage>
       </ImageInstall>
-
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
@@ -40,7 +44,6 @@
           </ModifyPartitions>
         </Disk>
       </DiskConfiguration>
-
       <UserData>
         <AcceptEula>true</AcceptEula>
         <FullName>Administrator</FullName>
@@ -50,6 +53,7 @@
     </component>
   </settings>
 
+  <!-- 2) Specialize pass: set computer name -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
@@ -57,6 +61,42 @@
     </component>
   </settings>
 
-  <cpi:offlineImage cpi:source="wim:c:/sources/install.wim#Windows Server 2022 Datacenter (Desktop Experience)"
-                    xmlns:cpi="urn:schemas-microsoft-com:cpi" />
+  <!-- 3) OOBE: configure auto-logon, admin password, WinRM via FirstLogonCommands -->
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <AutoLogon>
+        <Password>
+          <Value>packer</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <Enabled>true</Enabled>
+        <Username>Administrator</Username>
+        <LogonCount>1</LogonCount>
+      </AutoLogon>
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>packer</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>
+            powershell -ExecutionPolicy Unrestricted -Command "Enable-PSRemoting -Force;
+              New-NetFirewallRule -Name 'WinRM-HTTPS-In-TCP'
+                                  -DisplayName 'WinRM HTTPS'
+                                  -Direction Inbound
+                                  -Action Allow
+                                  -Protocol TCP
+                                  -LocalPort 5986"
+          </CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+
+  <!-- 4) Offline image spec: points to the correct WIM index -->
+  <cpi:offlineImage cpi:source="wim:c:/sources/install.wim#Windows Server 2022 Datacenter (Desktop Experience)" />
 </unattend>
