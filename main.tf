@@ -1,3 +1,4 @@
+# main.tf
 terraform {
   required_providers {
     vmworkstation = {
@@ -12,7 +13,6 @@ provider "vmworkstation" {
   password = var.vmrest_pass
   url      = "http://127.0.0.1:8697"
   https    = false
-  debug    = false
 }
 
 resource "vmworkstation_vm" "vault" {
