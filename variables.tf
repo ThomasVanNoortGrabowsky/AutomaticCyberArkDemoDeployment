@@ -1,32 +1,32 @@
 variable "vmrest_user" {
-  type    = string
-  default = "vmrest"
+  type        = string
+  description = "VMREST username"
 }
 
-variable "vmrest_password" {
-  type    = string
-  default = "Cyberark1"
+variable "vmrest_pass" {
+  type        = string
+  description = "VMREST password"
+  sensitive   = true
 }
 
-variable "vault_image_id" {
-  type = string
-}
-
-variable "app_image_id" {
-  type = string
+variable "template_id" {
+  type        = string
+  description = "GUID of the Win2022_GUI template VM"
 }
 
 variable "vm_processors" {
-  type    = number
-  default = 2
+  type        = number
+  description = "Number of vCPUs for each demo VM"
+  default     = 2
 }
 
 variable "vm_memory" {
-  type    = number
-  default = 2048
+  type        = number
+  description = "Memory (MB) for each demo VM"
+  default     = 2048
 }
 
 variable "vm_path" {
-  type    = string
-  default = "C:\\Users\\ThomasvanNoort\\Documents\\Virtual Machines\\"
+  type        = string
+  description = "Filesystem path where the new VMs will be placed"
 }
