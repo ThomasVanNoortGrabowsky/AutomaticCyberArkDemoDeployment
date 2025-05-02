@@ -4,10 +4,10 @@
 .DESCRIPTION
     1) Validates the ISO checksum.
     2) Installs Packer if missing.
-    3) Installs the VMware, QEMU, and VirtualBox Packer plugins.
+    3) Installs the VMware Packer plugin.
     4) Cleans previous Packer output.
-    5) Removes unsupported linked_clone from the JSON template.
-    6) Builds the Win2022_GUI template with Packer.
+    5) Removes any "linked_clone" lines from the JSON template.
+    6) Builds only the VMware-ISO template with Packer.
     7) Registers the VMX with VMware Workstation (vmrun register).
     8) Starts and checks the VMREST API.
     9) Retrieves the template GUID from VMREST.
@@ -43,7 +43,7 @@ if (-not (Test-Path $IsoPath)) {
 }
 $isoUrl      = "file:///$($IsoPath -replace '\\','/')"
 $isoChecksum = 'sha256:' + (Get-FileHash -Path $IsoPath -Algorithm SHA256).Hash
-Write-Host "ISO validated. Checksum: $isoChecksum"
+Write-Host "ISO validated. Checksum: $isoChecksum" -ForegroundColor Green
 
 #---- 2) Install Packer if missing ----#
 if (-not (Test-Path $packerExe)) {
@@ -58,13 +58,9 @@ if (-not (Test-Path $packerExe)) {
 # Update PATH for Packer
 $env:PATH = $env:PATH + ';' + (Split-Path $packerExe)
 
-#---- 3) Install Packer plugins ----#
+#---- 3) Install VMware plugin ----#
 Write-Host 'Installing VMware Packer plugin...' -ForegroundColor Cyan
 & $packerExe plugins install github.com/hashicorp/vmware
-Write-Host 'Installing QEMU Packer plugin...' -ForegroundColor Cyan
-& $packerExe plugins install github.com/hashicorp/qemu
-Write-Host 'Installing VirtualBox Packer plugin...' -ForegroundColor Cyan
-& $packerExe plugins install github.com/hashicorp/virtualbox
 
 #---- 4) Clean previous Packer output ----#
 if (Test-Path $outputDir) {
@@ -73,14 +69,14 @@ if (Test-Path $outputDir) {
     Remove-Item -Path $outputDir -Recurse -Force
 }
 
-#---- 5) Remove unsupported linked_clone ----#
-Write-Host 'Removing unsupported "linked_clone" from JSON template...' -ForegroundColor Cyan
-(Get-Content $jsonTemplate) -replace '"linked_clone"\s*:\s*true,?' , '' | Set-Content $jsonTemplate
+#---- 5) Remove "linked_clone" from JSON ----#
+Write-Host 'Stripping any "linked_clone" lines from JSON template...' -ForegroundColor Cyan
+(Get-Content $jsonTemplate) | Where-Object { $_ -notmatch 'linked_clone' } | Set-Content $jsonTemplate
 
-#---- 6) Build with Packer ----#
-Write-Host 'Starting Packer build...' -ForegroundColor Cyan
+#---- 6) Build only VMware-ISO ----#
+Write-Host 'Starting Packer build (vmware-iso only)...' -ForegroundColor Cyan
 Push-Location $packerDir
-& $packerExe build -var "iso_url=$isoUrl" -var "iso_checksum=$isoChecksum" $jsonTemplate
+& $packerExe build -only="vmware-iso" -var "iso_url=$isoUrl" -var "iso_checksum=$isoChecksum" $jsonTemplate
 if ($LASTEXITCODE -ne 0) {
     Write-Error 'Packer build failed.'
     Pop-Location
@@ -109,15 +105,12 @@ Write-Host 'Waiting for VMREST API...' -NoNewline
 for ($i = 1; $i -le 10; $i++) {
     try {
         Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $hdrs | Out-Null
-        Write-Host ' OK' -ForegroundColor Green
-        break
+        Write-Host ' OK' -ForegroundColor Green; break
     } catch {
         Write-Host '.' -NoNewline; Start-Sleep -Seconds 3
     }
 }
-try {
-    Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $hdrs | Out-Null
-} catch {
+try { Invoke-RestMethod -Uri 'http://127.0.0.1:8697/api/vms' -Headers $hdrs | Out-Null } catch {
     Write-Error 'VMREST API did not respond.'; exit 1
 }
 
@@ -162,4 +155,4 @@ foreach ($name in $vmNames) {
     }
 }
 
-Write-Host 'All done. Your demo VMs are built, deployed, and running in VMware Workstation.' -ForegroundColor Green
+Write-Host 'All done. Your demo VMs are built and running.' -ForegroundColor Green
