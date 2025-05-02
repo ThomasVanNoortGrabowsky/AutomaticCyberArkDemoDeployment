@@ -50,7 +50,8 @@ if (-not (Test-Path $packerExe)) {
     Expand-Archive -Path $zip -DestinationPath $packerBin -Force
     Remove-Item $zip
 }
-$env:PATH = "$($env:PATH);$(Split-Path $packerExe)"
+# Update PATH for Packer
+$env:PATH = $env:PATH + ";" + (Split-Path $packerExe)
 
 #---- 3) Ensure VMware plugin ----#
 Write-Host "Installing VMware Packer plugin..." -ForegroundColor Cyan
@@ -129,22 +130,3 @@ vm_path         = "$VmOutputPath"
 Write-Host "Running Terraform init & apply..." -ForegroundColor Cyan
 Push-Location $scriptRoot
 terraform init -upgrade
-terraform apply -auto-approve -parallelism=1
-Pop-Location
-Write-Host "✔ Terraform apply complete." -ForegroundColor Green
-
-#---- 12) Launch demo VMs ----#
-Write-Host "Launching demo VMs in VMware Workstation..." -ForegroundColor Cyan
-$vmNames = 'Vault-VM','PVWA-VM','PSM-VM','CPM-VM'
-$vmrun   = (Get-Command vmrun -ErrorAction SilentlyContinue).Path
-if (-not $vmrun) { $vmrun = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe' }
-foreach ($name in $vmNames) {
-    $vmx = Join-Path $VmOutputPath "$name\$name.vmx"
-    if (Test-Path $vmx) {
-        Write-Host "-> Starting $name..." -NoNewline; & $vmrun -T ws start $vmx; Write-Host " OK" -ForegroundColor Green
-    } else {
-        Write-Warning "VMX not found: $vmx"
-    }
-}
-
-Write-Host "🎉 All done! Your demo VMs should now be built, deployed, and running in the Workstation GUI." -ForegroundColor Green
