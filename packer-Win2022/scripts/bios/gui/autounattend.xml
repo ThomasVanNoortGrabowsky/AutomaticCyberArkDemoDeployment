@@ -4,10 +4,30 @@
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xmlns:cpi="urn:schemas-microsoft-com:cpi">
 
-  <!-- 1) Windows PE: set up disk, apply WIM, accept EULA -->
+  <!-- 1) windowsPE pass: skip language/time/keyboard -->
   <settings pass="windowsPE">
-    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+    <!-- Set all locale/language settings so Setup never prompts -->
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <!-- Apply and partition the WIM image -->
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
       <ImageInstall>
         <OSImage>
           <InstallFrom>
@@ -53,18 +73,24 @@
     </component>
   </settings>
 
-  <!-- 2) Specialize pass: set computer name -->
+  <!-- 2) specialize pass: set hostname -->
   <settings pass="specialize">
-    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
       <ComputerName>WIN2022</ComputerName>
     </component>
   </settings>
 
-  <!-- 3) OOBE: configure auto-logon, admin password, WinRM via FirstLogonCommands -->
+  <!-- 3) oobeSystem pass: auto-logon, WinRM setup -->
   <settings pass="oobeSystem">
-    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
       <AutoLogon>
         <Password>
           <Value>packer</Value>
@@ -85,18 +111,19 @@
           <Order>1</Order>
           <CommandLine>
             powershell -ExecutionPolicy Unrestricted -Command "Enable-PSRemoting -Force;
-              New-NetFirewallRule -Name 'WinRM-HTTPS-In-TCP'
-                                  -DisplayName 'WinRM HTTPS'
-                                  -Direction Inbound
-                                  -Action Allow
-                                  -Protocol TCP
-                                  -LocalPort 5986"
+               New-NetFirewallRule -Name 'WinRM-HTTPS-In-TCP'
+                                   -DisplayName 'WinRM HTTPS'
+                                   -Direction Inbound
+                                   -Action Allow
+                                   -Protocol TCP
+                                   -LocalPort 5986"
           </CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
     </component>
   </settings>
 
-  <!-- 4) Offline image spec: points to the correct WIM index -->
-  <cpi:offlineImage cpi:source="wim:c:/sources/install.wim#Windows Server 2022 Datacenter (Desktop Experience)" />
+  <!-- 4) offlineImage: apply correct WIM index -->
+  <cpi:offlineImage
+    cpi:source="wim:c:/sources/install.wim#Windows Server 2022 Datacenter (Desktop Experience)" />
 </unattend>
